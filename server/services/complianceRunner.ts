@@ -28,6 +28,9 @@ export class ZatcaComplianceRunner {
     }
 
     const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+    const keyPath = path.join(this.storageDir, 'egs_private_key.pem');
+    const privateKeyPem = creds.privateKeyPem || (fs.existsSync(keyPath) ? fs.readFileSync(keyPath, 'utf8') : '');
+
     const results: any[] = [];
 
     const now = new Date();
@@ -98,12 +101,8 @@ export class ZatcaComplianceRunner {
 
       const docHash = computeZatcaInvoiceHash(doc.xml);
       let docSignature = '';
-      if (creds.privateKeyPem) {
-        try {
-          docSignature = signInvoiceHash(docHash, creds.privateKeyPem);
-        } catch (_e) {
-          docSignature = '';
-        }
+      if (privateKeyPem) {
+        docSignature = signInvoiceHash(docHash, privateKeyPem);
       }
 
       const signedXmlBase64 = Buffer.from(doc.xml, 'utf8').toString('base64');

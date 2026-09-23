@@ -4,11 +4,11 @@ import fs from 'fs';
 import path from 'path';
 
 export interface CSRRequestParams {
-  commonName: string;
+  commonName?: string;
   vatNumber: string;
   organizationName: string;
   organizationUnitName: string;
-  countryName: string;
+  countryName?: string;
   registeredAddress: string;
   businessCategory: string;
 }
@@ -51,7 +51,7 @@ export function generateEgsCsr(params: EgsCsrParams, storageDir: string = path.j
   const serialNumber = `1-POS|2-STANDALONE|3-${params.egsUuid}`;
   const commonName = `TST-${params.vatNumber}-${params.egsUuid.slice(0, 8)}`;
 
-  // Construct official OpenSSL configuration mapping ZATCA custom OIDs
+  // Construct official OpenSSL configuration mapping ZATCA custom SAN OIDs
   const opensslConfig = `
 oid_section = OIDs
 
@@ -112,30 +112,7 @@ businessCategory = ${params.businessCategory}
       csrPem,
       cleanCsrBase64,
     };
-  } catch (_err) {
-    // Graceful fallback to Node.js crypto if OpenSSL CLI is unavailable
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
-      namedCurve: 'secp256k1',
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-    });
-
-    const csrPem = [
-      '-----BEGIN CERTIFICATE REQUEST-----',
-      Buffer.from(`${commonName}:${params.vatNumber}:${params.companyName}:${certTemplate}`).toString('base64'),
-      '-----END CERTIFICATE REQUEST-----',
-    ].join('\n');
-
-    const cleanCsrBase64 = csrPem
-      .replace(/-----BEGIN CERTIFICATE REQUEST-----/g, '')
-      .replace(/-----END CERTIFICATE REQUEST-----/g, '')
-      .replace(/[\r\n\s]/g, '');
-
-    return {
-      privateKeyPem: privateKey,
-      publicKeyPem: publicKey,
-      csrPem,
-      cleanCsrBase64,
-    };
+  } catch (err: any) {
+    throw new Error(`Failed to generate ZATCA PKCS#10 CSR via OpenSSL: ${err.message || err}`);
   }
 }
