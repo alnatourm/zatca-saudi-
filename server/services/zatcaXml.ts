@@ -134,7 +134,7 @@ billingRefXml +
 `<cac:LegalMonetaryTotal>` +
   `<cbc:LineExtensionAmount currencyID="SAR">${totalNet.toFixed(2)}</cbc:LineExtensionAmount>` +
   `<cbc:TaxExclusiveAmount currencyID="SAR">${totalNet.toFixed(2)}</cbc:TaxExclusiveAmount>` +
-  `<cbc:TaxInclusiveAmount currencyID="SAR">${payableAmount.toFixed(2)}</cbc:PayableAmount>` +
+  `<cbc:TaxInclusiveAmount currencyID="SAR">${payableAmount.toFixed(2)}</cbc:TaxInclusiveAmount>` +
   `<cbc:AllowanceTotalAmount currencyID="SAR">0.00</cbc:AllowanceTotalAmount>` +
   `<cbc:PayableAmount currencyID="SAR">${payableAmount.toFixed(2)}</cbc:PayableAmount>` +
 `</cac:LegalMonetaryTotal>` +

@@ -9,6 +9,7 @@ export function buildZATCAUBLXml(params: {
   invoiceHashBase64?: string;
   qrCodeBase64TLV: string;
   digitalSignatureBase64: string;
+  csidCertificateBase64?: string;
   request: InvoiceRequest;
   taxpayer: TaxpayerDetails;
   subtotalSAR: number;

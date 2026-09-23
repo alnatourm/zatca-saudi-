@@ -194,6 +194,8 @@ router.post('/invoice/generate', async (req: Request, res: Response) => {
       pih: currentPih,
       qrCodeBase64TLV: tlvResult.base64TLV,
       digitalSignatureBase64,
+      invoiceHashBase64,
+      csidCertificateBase64: egs.certificate.complianceCSID,
       request: requestData,
       taxpayer: egs.taxpayer,
       subtotalSAR,
