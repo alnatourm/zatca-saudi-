@@ -8,10 +8,12 @@ import { buildZatcaPhase2Qr } from '../crypto/qr';
 import { computeXmlHash } from '../crypto/signer';
 import { generateEgsCsr } from '../crypto/csr';
 import { ZatcaOnboardingService } from '../services/zatcaOnboarding';
+import { ZatcaComplianceRunner } from '../services/complianceRunner';
 
 const onboardingService = new ZatcaOnboardingService('simulation');
 const STORAGE_DIR = path.join(process.cwd(), 'server/storage');
 const CREDENTIALS_FILE = path.join(STORAGE_DIR, 'zatca_credentials.json');
+const complianceRunner = new ZatcaComplianceRunner(STORAGE_DIR, 'simulation');
 import {
   getEGSState,
   onboardEGS,
@@ -483,6 +485,22 @@ router.post('/zatca/onboard/upgrade-production', async (req: Request, res: Respo
     return res.json({
       status: 'PRODUCTION_READY',
       message: 'Production CSID issued successfully. Unit is authorized for live clearance & reporting.',
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Route D: Run Compliance Validation Checks
+router.post('/zatca/onboard/run-compliance', async (req: Request, res: Response) => {
+  try {
+    const { vatNumber = '300049785700003', companyName = 'Saudi Flame Grill' } = req.body;
+
+    const results = await complianceRunner.runAllComplianceChecks(vatNumber, companyName);
+
+    return res.json({
+      status: 'COMPLIANCE_TESTS_COMPLETED',
+      results,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
