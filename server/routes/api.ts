@@ -27,6 +27,7 @@ import { generateAndRenderZATCAQR } from '../qr';
 import {
   generateZATCATLVBase64,
   computeSHA256Base64,
+  computeZatcaInvoiceHash,
   signInvoiceHash,
   decodeZATCATLV,
 } from '../zatca/crypto';
@@ -152,7 +153,7 @@ router.post('/invoice/generate', async (req: Request, res: Response) => {
       includeSignatureBlocks: false, // Exclude UBLExtensions, QR, and Signature elements per Rule BR-KSA-26
     });
 
-    const invoiceHashBase64 = computeSHA256Base64(tempXmlForHash);
+    const invoiceHashBase64 = computeZatcaInvoiceHash(tempXmlForHash);
 
     // 5. Digital signature
     const digitalSignatureBase64 = signInvoiceHash(

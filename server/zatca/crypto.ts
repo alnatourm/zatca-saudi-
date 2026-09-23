@@ -165,6 +165,20 @@ export function computeSHA256Base64(input: string): string {
 }
 
 /**
+ * Computes compliant ZATCA invoice hash by stripping UBLExtensions, Signature, and QR AdditionalDocumentReference per Rule BR-KSA-26.
+ */
+export function computeZatcaInvoiceHash(xmlString: string): string {
+  const cleanXml = xmlString
+    .replace(/<ext:UBLExtensions[\s\S]*?<\/ext:UBLExtensions>/g, '')
+    .replace(/<cac:Signature[\s\S]*?<\/cac:Signature>/g, '')
+    .replace(/<cac:AdditionalDocumentReference>\s*<cbc:ID>QR<\/cbc:ID>[\s\S]*?<\/cac:AdditionalDocumentReference>/g, '')
+    .replace(/>\s+</g, '><')
+    .trim();
+
+  return crypto.createHash('sha256').update(cleanXml, 'utf8').digest('base64');
+}
+
+/**
  * Computes SHA-256 hash and returns Hex string.
  */
 export function computeSHA256Hex(input: string): string {
