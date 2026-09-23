@@ -1,0 +1,270 @@
+import { Router, Request, Response } from 'express';
+import QRCode from 'qrcode';
+import {
+  getEGSState,
+  onboardEGS,
+  updateStateAfterInvoice,
+  saveInvoice,
+  getInvoiceList,
+  getInvoiceById,
+  resetEGSState,
+} from '../zatca/egsStore';
+import { generateAndRenderZATCAQR } from '../qr';
+import {
+  generateZATCATLVBase64,
+  computeSHA256Base64,
+  signInvoiceHash,
+  decodeZATCATLV,
+} from '../zatca/crypto';
+import { buildZATCAUBLXml } from '../zatca/ubl';
+import { validateZATCABusinessRules } from '../zatca/validation';
+import { InvoiceRequest, GeneratedInvoiceResponse } from '../zatca/types';
+
+const router = Router();
+
+// GET EGS state and device status
+router.get('/egs/status', (_req: Request, res: Response) => {
+  const egs = getEGSState();
+  res.json({ success: true, egs });
+});
+
+// POST Onboard EGS device
+router.post('/egs/onboard', (req: Request, res: Response) => {
+  const { taxpayerName, vatNumber, branchName, city, otp, crNumber, streetName, buildingNumber, postalCode, district } = req.body;
+
+  if (!taxpayerName || !vatNumber || !branchName || !city || !otp) {
+    res.status(400).json({
+      success: false,
+      error: 'Taxpayer Name, 15-digit VAT Number, Branch Name, City, and OTP are required.',
+    });
+    return;
+  }
+
+  const updatedEGS = onboardEGS({
+    taxpayerName,
+    vatNumber,
+    branchName,
+    city,
+    otp,
+    crNumber,
+    streetName,
+    buildingNumber,
+    postalCode,
+    district,
+  });
+
+  res.json({
+    success: true,
+    message: 'EGS Device successfully onboarded. CSID Certificate issued.',
+    egs: updatedEGS,
+  });
+});
+
+// POST Reset EGS ICV/PIH chain
+router.post('/egs/reset', (_req: Request, res: Response) => {
+  const egs = resetEGSState();
+  res.json({
+    success: true,
+    message: 'Invoice Counter Value (ICV) reset to 0. PIH chain restored to initial hash.',
+    egs,
+  });
+});
+
+// POST Generate & Submit Invoice
+router.post('/invoice/generate', async (req: Request, res: Response) => {
+  try {
+    const requestData: InvoiceRequest = req.body;
+    const egs = getEGSState();
+
+    if (!egs.isOnboarded || !egs.certificate) {
+      res.status(400).json({
+        success: false,
+        error: 'EGS Device is not onboarded. Please onboard device first in the EGS Onboarding tab.',
+      });
+      return;
+    }
+
+    // 1. Business rules validation
+    const validationResult = validateZATCABusinessRules({
+      request: requestData,
+      taxpayer: egs.taxpayer,
+      expectedPih: egs.pih,
+    });
+
+    if (!validationResult.isValid) {
+      res.status(422).json({
+        success: false,
+        error: 'ZATCA Compliance Validation Failed',
+        logs: validationResult.logs,
+      });
+      return;
+    }
+
+    // 2. Financial calculation
+    let subtotalSAR = 0;
+    let vatTotalSAR = 0;
+
+    const items = (requestData.lineItems || []).map((item) => {
+      const lineSub = item.quantity * item.unitPrice - (item.discount || 0);
+      const lineVat = lineSub * (item.vatRate / 100);
+      subtotalSAR += lineSub;
+      vatTotalSAR += lineVat;
+      return { ...item };
+    });
+
+    const grandTotalSAR = subtotalSAR + vatTotalSAR;
+
+    // 3. Serial Number & UUID
+    const currentIcv = egs.icv + 1;
+    const invoiceNumber = `INV-${new Date().getFullYear()}-${String(currentIcv).padStart(5, '0')}`;
+    const uuid = `sa-vat-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const currentPih = egs.pih;
+    const issueTimestamp = `${requestData.issueDate || new Date().toISOString().split('T')[0]}T${requestData.issueTime || new Date().toISOString().split('T')[1].slice(0, 8)}Z`;
+
+    // 4. Provisional XML & Hash
+    const tempXmlForHash = buildZATCAUBLXml({
+      invoiceNumber,
+      uuid,
+      icv: currentIcv,
+      pih: currentPih,
+      invoiceHashBase64: 'TEMP_HASH',
+      qrCodeBase64TLV: 'TEMP_QR',
+      digitalSignatureBase64: 'TEMP_SIG',
+      request: requestData,
+      taxpayer: egs.taxpayer,
+      subtotalSAR,
+      vatTotalSAR,
+      grandTotalSAR,
+    });
+
+    const invoiceHashBase64 = computeSHA256Base64(tempXmlForHash);
+
+    // 5. Digital signature
+    const digitalSignatureBase64 = signInvoiceHash(
+      invoiceHashBase64,
+      egs.certificate.privateKeyPem
+    );
+
+    // 6. Generate ZATCA Phase 2 9-Tag TLV Base64 & QR Code Image using server/qr.ts utility
+    const { base64TLV, dataUrl: qrCodeDataUrl } = await generateAndRenderZATCAQR({
+      sellerName: egs.taxpayer.taxpayerName,
+      vatNumber: egs.taxpayer.vatNumber,
+      timestamp: issueTimestamp,
+      totalAmount: grandTotalSAR.toFixed(2),
+      vatAmount: vatTotalSAR.toFixed(2),
+      xmlHash: invoiceHashBase64,
+      ecdsaSignature: digitalSignatureBase64,
+      publicKey: egs.certificate.publicKeyPem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\n/g, ''),
+      certificateStamp: egs.certificate.complianceCSID,
+    });
+
+    const tlvResult = generateZATCATLVBase64({
+      sellerName: egs.taxpayer.taxpayerName,
+      vatNumber: egs.taxpayer.vatNumber,
+      timestamp: issueTimestamp,
+      totalWithVat: grandTotalSAR.toFixed(2),
+      vatTotal: vatTotalSAR.toFixed(2),
+      invoiceHashBase64,
+      digitalSignatureBase64,
+      publicKeyPemOrBase64: egs.certificate.publicKeyPem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\n/g, ''),
+      csidCertificateBase64: egs.certificate.complianceCSID,
+    });
+
+    // 8. Final canonical UBL 2.1 XML
+    const finalUblXml = buildZATCAUBLXml({
+      invoiceNumber,
+      uuid,
+      icv: currentIcv,
+      pih: currentPih,
+      invoiceHashBase64,
+      qrCodeBase64TLV: tlvResult.base64TLV,
+      digitalSignatureBase64,
+      request: requestData,
+      taxpayer: egs.taxpayer,
+      subtotalSAR,
+      vatTotalSAR,
+      grandTotalSAR,
+    });
+
+    // 9. Update state ICV and PIH chain
+    updateStateAfterInvoice(invoiceHashBase64);
+
+    // Compliance status label (B2B = CLEARED by ZATCA API, B2C = REPORTED)
+    const complianceStatus = requestData.invoiceType === '0100000' ? 'CLEARED' : 'REPORTED';
+
+    const generatedResponse: GeneratedInvoiceResponse = {
+      id: uuid,
+      uuid,
+      invoiceType: requestData.invoiceType,
+      invoiceTypeLabel: requestData.invoiceType === '0100000' ? 'Standard Tax Invoice (B2B - فاتورة ضريبية)' : 'Simplified Tax Invoice (B2C - فاتورة ضريبية مبسطة)',
+      invoiceNumber,
+      icv: currentIcv,
+      pih: currentPih,
+      invoiceHash: invoiceHashBase64,
+      issueTimestamp,
+      taxpayer: egs.taxpayer,
+      customer: requestData.customer,
+      lineItems: items,
+      subtotalSAR,
+      vatTotalSAR,
+      grandTotalSAR,
+      qrCodeBase64TLV: tlvResult.base64TLV,
+      qrCodeDataUrl,
+      tlvTags: tlvResult.tags,
+      digitalSignatureBase64,
+      ublXml: finalUblXml,
+      complianceStatus,
+      complianceLogs: validationResult.logs,
+      createdAt: new Date().toISOString(),
+    };
+
+    saveInvoice(generatedResponse);
+
+    res.json({
+      success: true,
+      message: requestData.invoiceType === '0100000'
+        ? 'Invoice CLEARED by ZATCA Phase 2 Clearance API.'
+        : 'Simplified Invoice signed & REPORTED to ZATCA Fatoora Platform.',
+      invoice: generatedResponse,
+      updatedEgsState: getEGSState(),
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Error generating ZATCA Invoice',
+    });
+  }
+});
+
+// GET List of generated invoices
+router.get('/invoice/list', (_req: Request, res: Response) => {
+  const invoices = getInvoiceList();
+  res.json({ success: true, count: invoices.length, invoices });
+});
+
+// POST Decode QR Code
+router.post('/invoice/decode-qr', (req: Request, res: Response) => {
+  const { qrBase64 } = req.body;
+  if (!qrBase64) {
+    res.status(400).json({ success: false, error: 'qrBase64 string required' });
+    return;
+  }
+  const decoded = decodeZATCATLV(qrBase64);
+  res.json({ success: true, decoded });
+});
+
+// GET UBL XML download/view endpoint
+router.get('/invoice/xml/:id', (req: Request, res: Response) => {
+  const inv = getInvoiceById(req.params.id);
+  if (!inv) {
+    res.status(404).send('Invoice not found');
+    return;
+  }
+
+  res.setHeader('Content-Type', 'application/xml');
+  res.setHeader('Content-Disposition', `attachment; filename="${inv.invoiceNumber}_ZATCA.xml"`);
+  res.send(inv.ublXml);
+});
+
+export default router;

@@ -1,0 +1,6 @@
+{
+  "name": "ZATCA Phase 2 E-Invoicing Gateway",
+  "description": "Saudi Arabia ZATCA Phase 2 (Fatoora) EGS onboarding, B2B/B2C UBL 2.1 E-Invoicing gateway simulator, scannable TLV QR code generator, and hash chaining state inspector.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
