@@ -4,6 +4,7 @@ import path from 'path';
 import { ZatcaOnboardingService } from './zatcaOnboarding';
 import { buildZatcaXml } from './zatcaXml';
 import { computeZatcaInvoiceHash, signInvoiceHash } from '../zatca/crypto';
+import { buildCompleteXadesSignature } from '../zatca/xades';
 
 export class ZatcaComplianceRunner {
   private onboardingService: ZatcaOnboardingService;
@@ -100,12 +101,22 @@ export class ZatcaComplianceRunner {
       });
 
       const docHash = computeZatcaInvoiceHash(doc.xml);
-      let docSignature = '';
+      let finalXml = doc.xml;
+
       if (privateKeyPem) {
-        docSignature = signInvoiceHash(docHash, privateKeyPem);
+        const issueDateTime = `${issueDate}T${issueTime}Z`;
+        const xadesBlock = buildCompleteXadesSignature({
+          invoiceHashBase64: docHash,
+          privateKeyPem,
+          csidCertificateBase64: creds.binarySecurityToken,
+          issueDateTime,
+        });
+
+        // Inject UBLExtensions right after opening <Invoice ...> tag
+        finalXml = doc.xml.replace(/(<Invoice[^>]*>)/, `$1${xadesBlock}`);
       }
 
-      const signedXmlBase64 = Buffer.from(doc.xml, 'utf8').toString('base64');
+      const signedXmlBase64 = Buffer.from(finalXml, 'utf8').toString('base64');
 
       try {
         const res = await this.onboardingService.submitComplianceInvoice({
