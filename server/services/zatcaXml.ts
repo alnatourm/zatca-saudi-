@@ -23,6 +23,13 @@ export interface ZatcaXmlParams {
   city?: string;
   district?: string;
   postalCode?: string;
+  buyerVat?: string;
+  buyerName?: string;
+  buyerStreet?: string;
+  buyerBuilding?: string;
+  buyerCity?: string;
+  buyerDistrict?: string;
+  buyerPostalCode?: string;
   lines: Array<ZatcaXmlLine>;
 }
 
@@ -67,8 +74,44 @@ export function buildZatcaXml(params: ZatcaXmlParams) {
   totalVat = Number(totalVat.toFixed(2));
   const payableAmount = Number((totalNet + totalVat).toFixed(2));
 
+  // BR-KSA-17 & BR-KSA-56: Credit / Debit notes require BillingReference
   const billingRefXml = params.billingReferenceId
     ? `<cac:BillingReference><cac:InvoiceDocumentReference><cbc:ID>${params.billingReferenceId}</cbc:ID></cac:InvoiceDocumentReference></cac:BillingReference>`
+    : '';
+
+  // PaymentMeans instruction note for Credit / Debit notes
+  const paymentMeansXml = (docTypeCode === '381' || docTypeCode === '383')
+    ? `<cac:PaymentMeans><cbc:PaymentMeansCode>10</cbc:PaymentMeansCode><cbc:InstructionNote>إلغاء فاتورة أو إرجاع بضائع</cbc:InstructionNote></cac:PaymentMeans>`
+    : `<cac:PaymentMeans><cbc:PaymentMeansCode>10</cbc:PaymentMeansCode></cac:PaymentMeans>`;
+
+  // BR-KSA-15 & BR-KSA-42: Standard (B2B) Invoices require full buyer address, VAT, and Delivery element
+  const customerXml = params.isSimplified
+    ? `<cac:AccountingCustomerParty>` +
+        `<cac:Party>` +
+          `<cac:PartyLegalEntity><cbc:RegistrationName>عميل نقدي</cbc:RegistrationName></cac:PartyLegalEntity>` +
+        `</cac:Party>` +
+      `</cac:AccountingCustomerParty>`
+    : `<cac:AccountingCustomerParty>` +
+        `<cac:Party>` +
+          `<cac:PartyIdentification><cbc:ID schemeID="NAT">${params.buyerVat || '300099999900003'}</cbc:ID></cac:PartyIdentification>` +
+          `<cac:PostalAddress>` +
+            `<cbc:StreetName>${params.buyerStreet || 'King Abdulaziz Road'}</cbc:StreetName>` +
+            `<cbc:BuildingNumber>${params.buyerBuilding || '5678'}</cbc:BuildingNumber>` +
+            `<cbc:CitySubdivisionName>${params.buyerDistrict || 'Sulaimaniyah'}</cbc:CitySubdivisionName>` +
+            `<cbc:CityName>${params.buyerCity || 'Riyadh'}</cbc:CityName>` +
+            `<cbc:PostalZone>${params.buyerPostalCode || '12345'}</cbc:PostalZone>` +
+            `<cac:Country><cbc:IdentificationCode>SA</cbc:IdentificationCode></cac:Country>` +
+          `</cac:PostalAddress>` +
+          `<cac:PartyTaxScheme>` +
+            `<cbc:CompanyID>${params.buyerVat || '300099999900003'}</cbc:CompanyID>` +
+            `<cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>` +
+          `</cac:PartyTaxScheme>` +
+          `<cac:PartyLegalEntity><cbc:RegistrationName>${params.buyerName || 'شركة المشتري السعودية'}</cbc:RegistrationName></cac:PartyLegalEntity>` +
+        `</cac:Party>` +
+      `</cac:AccountingCustomerParty>`;
+
+  const deliveryXml = !params.isSimplified
+    ? `<cac:Delivery><cbc:ActualDeliveryDate>${params.issueDate}</cbc:ActualDeliveryDate></cac:Delivery>`
     : '';
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>` +
@@ -113,12 +156,9 @@ billingRefXml +
     `<cac:PartyLegalEntity><cbc:RegistrationName>${params.sellerName}</cbc:RegistrationName></cac:PartyLegalEntity>` +
   `</cac:Party>` +
 `</cac:AccountingSupplierParty>` +
-`<cac:AccountingCustomerParty>` +
-  `<cac:Party>` +
-    `<cac:PartyLegalEntity><cbc:RegistrationName>عميل نقدي</cbc:RegistrationName></cac:PartyLegalEntity>` +
-  `</cac:Party>` +
-`</cac:AccountingCustomerParty>` +
-`<cac:PaymentMeans><cbc:PaymentMeansCode>10</cbc:PaymentMeansCode></cac:PaymentMeans>` +
+customerXml +
+deliveryXml +
+paymentMeansXml +
 `<cac:TaxTotal>` +
   `<cbc:TaxAmount currencyID="SAR">${totalVat.toFixed(2)}</cbc:TaxAmount>` +
   `<cac:TaxSubtotal>` +

@@ -58,7 +58,7 @@ export interface CustomerDetails {
 
 export interface InvoiceRequest {
   invoiceType: '0200000' | '0100000'; // 0200000 = Simplified (B2C), 0100000 = Standard (B2B)
-  invoiceSubType: '388'; // 388 = Tax Invoice
+  invoiceSubType: '388' | '381' | '383'; // 388 = Tax Invoice, 381 = Credit Note, 383 = Debit Note
   issueDate: string; // YYYY-MM-DD
   issueTime: string; // HH:mm:ss
   lineItems: LineItem[];

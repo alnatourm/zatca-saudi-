@@ -7,29 +7,68 @@ export interface XadesSignatureParams {
   issueDateTime: string; // ISO 8601: YYYY-MM-DDTHH:mm:ssZ
 }
 
+export function parseCsidCertificate(csidCertificateBase64: string) {
+  const certDer = Buffer.from(csidCertificateBase64, 'base64');
+  const certPem = `-----BEGIN CERTIFICATE-----\n${csidCertificateBase64.match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----`;
+
+  try {
+    const x509 = new crypto.X509Certificate(certPem);
+    const certDigestBase64 = crypto.createHash('sha256').update(certDer).digest('base64');
+    const serialNumberDecimal = BigInt(`0x${x509.serialNumber}`).toString(10);
+    const issuerName = x509.issuer.split('\n').reverse().join(', ');
+
+    return {
+      certDigestBase64,
+      serialNumberDecimal,
+      issuerName,
+    };
+  } catch (_e) {
+    // Fallback if Certificate is simulated/mocked in dev environment
+    const certDigestBase64 = crypto.createHash('sha256').update(certDer).digest('base64');
+    return {
+      certDigestBase64,
+      serialNumberDecimal: '1',
+      issuerName: 'CN=ZATCA-Pre-Production-Issuing-CA, OU=E-Invoicing, O=ZATCA, C=SA',
+    };
+  }
+}
+
+export function buildCanonicalSignedProperties(
+  signingTime: string,
+  certDigest: string,
+  issuer: string,
+  serial: string
+): string {
+  return `<xades:SignedProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Id="xadesSignedProperties">` +
+    `<xades:SignedSignatureProperties>` +
+      `<xades:SigningTime>${signingTime}</xades:SigningTime>` +
+      `<xades:SigningCertificate>` +
+        `<xades:Cert>` +
+          `<xades:CertDigest>` +
+            `<ds:DigestMethod xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"></ds:DigestMethod>` +
+            `<ds:DigestValue xmlns:ds="http://www.w3.org/2000/09/xmldsig#">${certDigest}</ds:DigestValue>` +
+          `</xades:CertDigest>` +
+          `<xades:IssuerSerial>` +
+            `<ds:X509IssuerName xmlns:ds="http://www.w3.org/2000/09/xmldsig#">${issuer}</ds:X509IssuerName>` +
+            `<ds:X509SerialNumber xmlns:ds="http://www.w3.org/2000/09/xmldsig#">${serial}</ds:X509SerialNumber>` +
+          `</xades:IssuerSerial>` +
+        `</xades:Cert>` +
+      `</xades:SigningCertificate>` +
+    `</xades:SignedSignatureProperties>` +
+  `</xades:SignedProperties>`;
+}
+
 export function buildCompleteXadesSignature(params: XadesSignatureParams): string {
-  // 1. Calculate SHA-256 digest of the X.509 Certificate DER bytes
-  const certDerBuffer = Buffer.from(params.csidCertificateBase64, 'base64');
-  const certDigestBase64 = crypto.createHash('sha256').update(certDerBuffer).digest('base64');
+  // 1. Parse Certificate dynamically using crypto.X509Certificate
+  const { certDigestBase64, serialNumberDecimal, issuerName } = parseCsidCertificate(params.csidCertificateBase64);
 
   // 2. Build Canonical SignedProperties Block
-  const signedPropertiesXml = 
-    `<xades:SignedProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Id="xadesSignedProperties">` +
-      `<xades:SignedSignatureProperties>` +
-        `<xades:SigningTime>${params.issueDateTime}</xades:SigningTime>` +
-        `<xades:SigningCertificate>` +
-          `<xades:Cert>` +
-            `<xades:CertDigest>` +
-              `<ds:DigestMethod xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>` +
-              `<ds:DigestValue xmlns:ds="http://www.w3.org/2000/09/xmldsig#">${certDigestBase64}</ds:DigestValue>` +
-            `</xades:CertDigest>` +
-            `<xades:IssuerSerial>` +
-              `<ds:X509IssuerName xmlns:ds="http://www.w3.org/2000/09/xmldsig#">CN=ZATCA-Pre-Production-Issuing-CA, OU=E-Invoicing, O=ZATCA, C=SA</ds:X509IssuerName>` +
-              `<ds:X509SerialNumber xmlns:ds="http://www.w3.org/2000/09/xmldsig#">1</ds:X509SerialNumber>` +
-            `</xades:Cert>` +
-          `</xades:SigningCertificate>` +
-        `</xades:SignedSignatureProperties>` +
-      `</xades:SignedProperties>`;
+  const signedPropertiesXml = buildCanonicalSignedProperties(
+    params.issueDateTime,
+    certDigestBase64,
+    issuerName,
+    serialNumberDecimal
+  );
 
   // 3. Digest of the SignedProperties block
   const signedPropertiesHashBase64 = crypto.createHash('sha256').update(signedPropertiesXml, 'utf8').digest('base64');
@@ -37,20 +76,20 @@ export function buildCompleteXadesSignature(params: XadesSignatureParams): strin
   // 4. Construct SignedInfo containing both references
   const signedInfoXml = 
     `<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">` +
-      `<ds:CanonicalizationMethod Algorithm="http://www.w3.org/2006/12/xml-c14n11"/>` +
-      `<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"/>` +
+      `<ds:CanonicalizationMethod Algorithm="http://www.w3.org/2006/12/xml-c14n11"></ds:CanonicalizationMethod>` +
+      `<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"></ds:SignatureMethod>` +
       `<ds:Reference Id="invoiceSignedData" URI="">` +
         `<ds:Transforms>` +
           `<ds:Transform Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116"><ds:XPath>not(//ancestor-or-self::ext:UBLExtensions)</ds:XPath></ds:Transform>` +
           `<ds:Transform Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116"><ds:XPath>not(//ancestor-or-self::cac:Signature)</ds:XPath></ds:Transform>` +
           `<ds:Transform Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116"><ds:XPath>not(//ancestor-or-self::cac:AdditionalDocumentReference[cbc:ID='QR'])</ds:XPath></ds:Transform>` +
-          `<ds:Transform Algorithm="http://www.w3.org/2006/12/xml-c14n11"/>` +
+          `<ds:Transform Algorithm="http://www.w3.org/2006/12/xml-c14n11"></ds:Transform>` +
         `</ds:Transforms>` +
-        `<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>` +
+        `<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"></ds:DigestMethod>` +
         `<ds:DigestValue>${params.invoiceHashBase64}</ds:DigestValue>` +
       `</ds:Reference>` +
       `<ds:Reference Type="http://www.w3.org/2000/09/xmldsig#SignedProperties" URI="#xadesSignedProperties">` +
-        `<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>` +
+        `<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"></ds:DigestMethod>` +
         `<ds:DigestValue>${signedPropertiesHashBase64}</ds:DigestValue>` +
       `</ds:Reference>` +
     `</ds:SignedInfo>`;

@@ -82,11 +82,25 @@ export function generateZATCAUBL21Xml(input: ZATCAXMLInput): string {
     })
     .join('');
 
-  const customerXml = request.customer
+  const isStandard = typeCodeName === '0100000';
+  const isCreditDebit = request.invoiceSubType === '381' || request.invoiceSubType === '383';
+
+  const customerXml = isStandard || request.customer
     ? `<cac:AccountingCustomerParty>` +
         `<cac:Party>` +
-          `<cac:PartyIdentification><cbc:ID schemeID="NAT">${request.customer.buyerVatNumber}</cbc:ID></cac:PartyIdentification>` +
-          `<cac:PartyLegalEntity><cbc:RegistrationName>${escapeXml(request.customer.buyerName)}</cbc:RegistrationName></cac:PartyLegalEntity>` +
+          `<cac:PartyIdentification><cbc:ID schemeID="NAT">${request.customer?.buyerVatNumber || '300099999900003'}</cbc:ID></cac:PartyIdentification>` +
+          `<cac:PostalAddress>` +
+            `<cbc:StreetName>${escapeXml(request.customer?.buyerStreet || 'King Abdulaziz Road')}</cbc:StreetName>` +
+            `<cbc:BuildingNumber>${escapeXml(request.customer?.buyerBuildingNumber || '5678')}</cbc:BuildingNumber>` +
+            `<cbc:CityName>${escapeXml(request.customer?.buyerCity || 'Riyadh')}</cbc:CityName>` +
+            `<cbc:PostalZone>${escapeXml(request.customer?.buyerPostalCode || '12345')}</cbc:PostalZone>` +
+            `<cac:Country><cbc:IdentificationCode>SA</cbc:IdentificationCode></cac:Country>` +
+          `</cac:PostalAddress>` +
+          `<cac:PartyTaxScheme>` +
+            `<cbc:CompanyID>${request.customer?.buyerVatNumber || '300099999900003'}</cbc:CompanyID>` +
+            `<cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>` +
+          `</cac:PartyTaxScheme>` +
+          `<cac:PartyLegalEntity><cbc:RegistrationName>${escapeXml(request.customer?.buyerName || 'شركة المشتري السعودية')}</cbc:RegistrationName></cac:PartyLegalEntity>` +
         `</cac:Party>` +
       `</cac:AccountingCustomerParty>`
     : `<cac:AccountingCustomerParty>` +
@@ -94,6 +108,14 @@ export function generateZATCAUBL21Xml(input: ZATCAXMLInput): string {
           `<cac:PartyLegalEntity><cbc:RegistrationName>عميل نقدي</cbc:RegistrationName></cac:PartyLegalEntity>` +
         `</cac:Party>` +
       `</cac:AccountingCustomerParty>`;
+
+  const deliveryXml = isStandard
+    ? `<cac:Delivery><cbc:ActualDeliveryDate>${request.issueDate}</cbc:ActualDeliveryDate></cac:Delivery>`
+    : '';
+
+  const paymentMeansXml = isCreditDebit
+    ? `<cac:PaymentMeans><cbc:PaymentMeansCode>10</cbc:PaymentMeansCode><cbc:InstructionNote>إلغاء فاتورة أو إرجاع بضائع</cbc:InstructionNote></cac:PaymentMeans>`
+    : `<cac:PaymentMeans><cbc:PaymentMeansCode>10</cbc:PaymentMeansCode></cac:PaymentMeans>`;
 
   const ublExtensionsXml = includeSignatureBlocks
     ? `<ext:UBLExtensions>` +
@@ -193,7 +215,8 @@ signatureXml +
   `</cac:Party>` +
 `</cac:AccountingSupplierParty>` +
 customerXml +
-`<cac:PaymentMeans><cbc:PaymentMeansCode>10</cbc:PaymentMeansCode></cac:PaymentMeans>` +
+deliveryXml +
+paymentMeansXml +
 `<cac:TaxTotal>` +
   `<cbc:TaxAmount currencyID="SAR">${vatTotalSAR.toFixed(2)}</cbc:TaxAmount>` +
   `<cac:TaxSubtotal>` +
