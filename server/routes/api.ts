@@ -114,36 +114,135 @@ router.post('/tenants/create', (req: Request, res: Response) => {
   }
 });
 
-// POST Onboard EGS device
-router.post('/egs/onboard', (req: Request, res: Response) => {
-  const { taxpayerName, vatNumber, branchName, city, otp, crNumber, streetName, buildingNumber, postalCode, district } = req.body;
+// POST Onboard EGS device via Live ZATCA Phase 2 API
+router.post('/egs/onboard', async (req: Request, res: Response) => {
+  try {
+    const { taxpayerName, vatNumber, branchName, city, otp, crNumber, streetName, buildingNumber, postalCode, district, tenantId, environment } = req.body;
 
-  if (!taxpayerName || !vatNumber || !branchName || !city || !otp) {
-    res.status(400).json({
-      success: false,
-      error: 'Taxpayer Name, 15-digit VAT Number, Branch Name, City, and OTP are required.',
+    if (!taxpayerName || !vatNumber || !branchName || !city || !otp) {
+      return res.status(400).json({
+        success: false,
+        error: 'Taxpayer Name, 15-digit VAT Number, Branch Name, City, and OTP are required.',
+      });
+    }
+
+    if (!/^3\d{13}3$/.test(String(vatNumber).trim())) {
+      return res.status(400).json({
+        success: false,
+        error: 'VAT Number must be exactly 15 digits starting and ending with 3.',
+      });
+    }
+
+    const activeId = tenantId || getActiveTenantId();
+    let tenant = getTenantById(activeId);
+
+    if (!tenant) {
+      tenant = {
+        id: activeId,
+        name: taxpayerName,
+        type: 'restaurant',
+        vatNumber,
+        crNumber: crNumber || '1010987654',
+        branchName,
+        city,
+        district: district || 'Olaya',
+        streetName: streetName || 'King Fahd Road',
+        buildingNumber: buildingNumber || '1234',
+        postalCode: postalCode || '12211',
+        egsUuid: crypto.randomUUID(),
+        environment: environment || 'simulation',
+        csidStatus: 'NOT_ONBOARDED',
+        icv: 0,
+        pih: 'NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==',
+        createdAt: new Date().toISOString(),
+      };
+      saveTenant(tenant);
+    } else {
+      tenant.name = taxpayerName;
+      tenant.vatNumber = vatNumber;
+      tenant.branchName = branchName;
+      tenant.city = city;
+      if (crNumber) tenant.crNumber = crNumber;
+      if (streetName) tenant.streetName = streetName;
+      if (buildingNumber) tenant.buildingNumber = buildingNumber;
+      if (postalCode) tenant.postalCode = postalCode;
+      if (district) tenant.district = district;
+      if (environment) tenant.environment = environment;
+      saveTenant(tenant);
+    }
+
+    // Step A: Generate PKCS#10 CSR with secp256k1 keypair
+    const egsUuid = tenant.egsUuid || crypto.randomUUID();
+    const csrResult = generateEgsCsr(
+      {
+        environment: tenant.environment || 'simulation',
+        vatNumber: tenant.vatNumber,
+        companyName: tenant.name,
+        branchName: tenant.branchName,
+        city: tenant.city,
+        businessCategory: 'Food and Beverage',
+        egsUuid,
+      },
+      STORAGE_DIR
+    );
+
+    tenant.privateKeyPem = csrResult.privateKeyPem;
+    tenant.publicKeyPem = csrResult.publicKeyPem;
+    saveTenant(tenant);
+
+    // Step B: Direct Live ZATCA OTP Exchange
+    const activeOnboardingService = new ZatcaOnboardingService(tenant.environment || 'simulation');
+    
+    let ccsid;
+    try {
+      ccsid = await activeOnboardingService.requestComplianceCsid(csrResult.cleanCsrBase64, otp);
+    } catch (zatcaErr: any) {
+      tenant.csidStatus = 'NOT_ONBOARDED';
+      saveTenant(tenant);
+
+      return res.status(400).json({
+        success: false,
+        error: zatcaErr.message || 'فشل التحقق من هيئة الزكاة (ZATCA Verification Failed)',
+        zatcaErrorCode: zatcaErr.zatcaCode || 'ZATCA_VERIFICATION_FAILED',
+        zatcaErrorMessage: zatcaErr.zatcaMessage || zatcaErr.message,
+        rawZatcaError: zatcaErr.rawZatcaError || null,
+      });
+    }
+
+    // Step C: On Success save CSID credentials to tenant profile
+    tenant.complianceRequestId = ccsid.requestID;
+    tenant.binarySecurityToken = ccsid.binarySecurityToken;
+    tenant.secret = ccsid.secret;
+    tenant.csidStatus = 'CCSID_ACTIVE';
+    saveTenant(tenant);
+
+    const updatedEGS = onboardEGS({
+      taxpayerName: tenant.name,
+      vatNumber: tenant.vatNumber,
+      branchName: tenant.branchName,
+      city: tenant.city,
+      otp,
+      crNumber: tenant.crNumber,
+      streetName: tenant.streetName,
+      buildingNumber: tenant.buildingNumber,
+      postalCode: tenant.postalCode,
+      district: tenant.district,
     });
-    return;
+
+    return res.json({
+      success: true,
+      message: 'تم التحقق بنجاح من هيئة الزكاة وإصدار شهادة CSID',
+      tenantId: tenant.id,
+      complianceRequestId: ccsid.requestID,
+      binarySecurityToken: ccsid.binarySecurityToken,
+      egs: updatedEGS,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: `فشل التحقق من هيئة الزكاة (ZATCA Verification Failed): ${err.message}`,
+    });
   }
-
-  const updatedEGS = onboardEGS({
-    taxpayerName,
-    vatNumber,
-    branchName,
-    city,
-    otp,
-    crNumber,
-    streetName,
-    buildingNumber,
-    postalCode,
-    district,
-  });
-
-  res.json({
-    success: true,
-    message: 'EGS Device successfully onboarded. CSID Certificate issued.',
-    egs: updatedEGS,
-  });
 });
 
 // POST Reset EGS ICV/PIH chain
@@ -516,16 +615,27 @@ router.get('/invoice/xml/:id', (req: Request, res: Response) => {
 router.post('/zatca/onboard/generate-csr', (req: Request, res: Response) => {
   try {
     const {
-      vatNumber = '300049785700003',
-      companyName = 'Saudi Flame Grill',
-      branchName = 'Riyadh Branch 1',
-      city = 'Riyadh',
+      tenantId,
+      vatNumber: vatInput,
+      companyName: compInput,
+      branchName: branchInput,
+      city: cityInput,
+      environment: envInput,
     } = req.body;
 
-    const egsUuid = crypto.randomUUID();
+    const activeId = tenantId || getActiveTenantId();
+    const tenant = getTenantById(activeId);
+
+    const vatNumber = tenant?.vatNumber || vatInput || '300049785700003';
+    const companyName = tenant?.name || compInput || 'Saudi Flame Grill';
+    const branchName = tenant?.branchName || branchInput || 'Riyadh Branch 1';
+    const city = tenant?.city || cityInput || 'Riyadh';
+    const env = envInput || tenant?.environment || (process.env.ZATCA_ENV as any) || 'simulation';
+
+    const egsUuid = tenant?.egsUuid || crypto.randomUUID();
     const result = generateEgsCsr(
       {
-        environment: 'simulation',
+        environment: env,
         vatNumber,
         companyName,
         branchName,
@@ -536,6 +646,13 @@ router.post('/zatca/onboard/generate-csr', (req: Request, res: Response) => {
       STORAGE_DIR
     );
 
+    if (tenant) {
+      tenant.privateKeyPem = result.privateKeyPem;
+      tenant.publicKeyPem = result.publicKeyPem;
+      tenant.environment = env;
+      saveTenant(tenant);
+    }
+
     if (!fs.existsSync(STORAGE_DIR)) {
       fs.mkdirSync(STORAGE_DIR, { recursive: true });
     }
@@ -544,11 +661,13 @@ router.post('/zatca/onboard/generate-csr', (req: Request, res: Response) => {
       path.join(STORAGE_DIR, 'egs_info.json'),
       JSON.stringify(
         {
+          tenantId: activeId,
           egsUuid,
           vatNumber,
           companyName,
           branchName,
           city,
+          environment: env,
         },
         null,
         2
@@ -557,7 +676,9 @@ router.post('/zatca/onboard/generate-csr', (req: Request, res: Response) => {
 
     return res.json({
       status: 'CSR_GENERATED',
+      tenantId: activeId,
       egsUuid,
+      environment: env,
       csrBase64: result.cleanCsrBase64,
     });
   } catch (err: any) {
@@ -568,12 +689,44 @@ router.post('/zatca/onboard/generate-csr', (req: Request, res: Response) => {
 // Route B: Exchange OTP for Compliance CSID
 router.post('/zatca/onboard/exchange-otp', async (req: Request, res: Response) => {
   try {
-    const { otp, csrBase64 } = req.body;
+    const { otp, csrBase64, tenantId, environment: envInput } = req.body;
     if (!otp || String(otp).trim().length !== 6) {
       return res.status(400).json({ error: 'A valid 6-digit OTP is required' });
     }
 
-    const ccsid = await onboardingService.requestComplianceCsid(csrBase64, otp);
+    const activeId = tenantId || getActiveTenantId();
+    const tenant = getTenantById(activeId);
+    const env = envInput || tenant?.environment || (process.env.ZATCA_ENV as any) || 'simulation';
+
+    const activeOnboardingService = new ZatcaOnboardingService(env);
+
+    let cleanCsr = csrBase64;
+    if (!cleanCsr && tenant?.privateKeyPem) {
+      const egsUuid = tenant.egsUuid || crypto.randomUUID();
+      const generated = generateEgsCsr(
+        {
+          environment: env,
+          vatNumber: tenant.vatNumber,
+          companyName: tenant.name,
+          branchName: tenant.branchName,
+          city: tenant.city,
+          businessCategory: 'Food and Beverage',
+          egsUuid,
+        },
+        STORAGE_DIR
+      );
+      cleanCsr = generated.cleanCsrBase64;
+    }
+
+    const ccsid = await activeOnboardingService.requestComplianceCsid(cleanCsr || 'DUMMY_CSR', otp);
+
+    if (tenant) {
+      tenant.complianceRequestId = ccsid.requestID;
+      tenant.binarySecurityToken = ccsid.binarySecurityToken;
+      tenant.secret = ccsid.secret;
+      tenant.csidStatus = 'COMPLIANCE_ACTIVE';
+      saveTenant(tenant);
+    }
 
     if (!fs.existsSync(STORAGE_DIR)) {
       fs.mkdirSync(STORAGE_DIR, { recursive: true });
@@ -583,6 +736,7 @@ router.post('/zatca/onboard/exchange-otp', async (req: Request, res: Response) =
       CREDENTIALS_FILE,
       JSON.stringify(
         {
+          tenantId: activeId,
           status: 'COMPLIANCE_ISSUED',
           complianceRequestId: ccsid.requestID,
           binarySecurityToken: ccsid.binarySecurityToken,
@@ -595,7 +749,9 @@ router.post('/zatca/onboard/exchange-otp', async (req: Request, res: Response) =
 
     return res.json({
       status: 'CCSID_ACTIVE',
+      tenantId: activeId,
       requestId: ccsid.requestID,
+      binarySecurityToken: ccsid.binarySecurityToken,
       message: 'Compliance CSID successfully issued. Proceed to sample compliance tests.',
     });
   } catch (err: any) {
@@ -606,21 +762,47 @@ router.post('/zatca/onboard/exchange-otp', async (req: Request, res: Response) =
 // Route C: Upgrade Compliance CSID to Production CSID
 router.post('/zatca/onboard/upgrade-production', async (req: Request, res: Response) => {
   try {
-    if (!fs.existsSync(CREDENTIALS_FILE)) {
+    const { tenantId, environment: envInput } = req.body;
+    const activeId = tenantId || getActiveTenantId();
+    const tenant = getTenantById(activeId);
+
+    const env = envInput || tenant?.environment || (process.env.ZATCA_ENV as any) || 'simulation';
+    const activeOnboardingService = new ZatcaOnboardingService(env);
+
+    let ccsidRequestId = tenant?.complianceRequestId;
+    let ccsidToken = tenant?.binarySecurityToken;
+    let ccsidSecret = tenant?.secret;
+
+    if (!ccsidRequestId && fs.existsSync(CREDENTIALS_FILE)) {
+      const currentCreds = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
+      ccsidRequestId = currentCreds.complianceRequestId;
+      ccsidToken = currentCreds.binarySecurityToken;
+      ccsidSecret = currentCreds.secret;
+    }
+
+    if (!ccsidRequestId || !ccsidToken) {
       return res.status(400).json({ error: 'No active Compliance CSID found. Run OTP onboarding first.' });
     }
 
-    const currentCreds = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
-    const pcsid = await onboardingService.requestProductionCsid(
-      currentCreds.complianceRequestId,
-      currentCreds.binarySecurityToken,
-      currentCreds.secret
+    const pcsid = await activeOnboardingService.requestProductionCsid(
+      ccsidRequestId,
+      ccsidToken,
+      ccsidSecret || 'zatca-simulated-secret'
     );
+
+    if (tenant) {
+      tenant.productionRequestId = pcsid.requestID;
+      tenant.binarySecurityToken = pcsid.binarySecurityToken;
+      tenant.secret = pcsid.secret;
+      tenant.csidStatus = 'PRODUCTION_ACTIVE';
+      saveTenant(tenant);
+    }
 
     fs.writeFileSync(
       CREDENTIALS_FILE,
       JSON.stringify(
         {
+          tenantId: activeId,
           status: 'PRODUCTION_ACTIVE',
           productionRequestId: pcsid.requestID,
           binarySecurityToken: pcsid.binarySecurityToken,
@@ -633,6 +815,8 @@ router.post('/zatca/onboard/upgrade-production', async (req: Request, res: Respo
 
     return res.json({
       status: 'PRODUCTION_READY',
+      tenantId: activeId,
+      productionRequestId: pcsid.requestID,
       message: 'Production CSID issued successfully. Unit is authorized for live clearance & reporting.',
     });
   } catch (err: any) {

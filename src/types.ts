@@ -12,7 +12,13 @@ export interface CompanyTenant {
   postalCode: string;
   egsUuid: string;
   environment: 'simulation' | 'production';
-  csidStatus: 'NOT_ONBOARDED' | 'COMPLIANCE_ACTIVE' | 'PRODUCTION_ACTIVE';
+  csidStatus: 'NOT_ONBOARDED' | 'CCSID_ACTIVE' | 'COMPLIANCE_ACTIVE' | 'PRODUCTION_ACTIVE';
+  privateKeyPem?: string;
+  publicKeyPem?: string;
+  binarySecurityToken?: string;
+  secret?: string;
+  complianceRequestId?: string;
+  productionRequestId?: string;
   icv: number;
   pih: string;
   createdAt: string;

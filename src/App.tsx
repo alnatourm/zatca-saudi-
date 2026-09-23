@@ -269,6 +269,7 @@ export default function App() {
         {activeTab === 'onboarding' && (
           <EGSOnboardingTab
             egsState={egsState}
+            activeTenant={tenants.find((t) => t.id === activeTenantId) || null}
             onOnboard={handleOnboard}
             isLoading={isLoading}
             lang={lang}

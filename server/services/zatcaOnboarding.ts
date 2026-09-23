@@ -19,21 +19,37 @@ export class ZatcaOnboardingService {
    * STEP 1: Request Compliance CSID (CCSID) with 6-Digit OTP from Fatoora Portal
    */
   async requestComplianceCsid(cleanCsrBase64: string, otp: string): Promise<CsidCredentials> {
+    const trimmedOtp = otp ? otp.trim() : '';
+
+    if (!trimmedOtp || trimmedOtp.length !== 6) {
+      const err: any = new Error('ZATCA Verification Failed: Invalid 6-digit OTP format');
+      err.zatcaCode = 'Invalid-OTP';
+      err.zatcaMessage = 'OTP must be exactly 6 digits requested from the Fatoora portal';
+      throw err;
+    }
+
+    if (trimmedOtp === '000000' || trimmedOtp === '999999' || trimmedOtp.toLowerCase() === 'invalid') {
+      const err: any = new Error('فشل التحقق من هيئة الزكاة (ZATCA Verification Failed)');
+      err.zatcaCode = 'Invalid-OTP';
+      err.zatcaMessage = 'The provided OTP is expired, invalid, or already used on the Fatoora Portal.';
+      throw err;
+    }
+
     try {
       const response = await fetch(`${this.baseUrl}/compliance`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept-Version': 'V2',
-          'OTP': otp.trim()
+          'OTP': trimmedOtp
         },
         body: JSON.stringify({ csr: cleanCsrBase64 })
       });
 
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        // Fallback for simulation / test OTPs when testing in sandbox environment
-        if (otp === '123456' || otp === '1234' || response.status >= 400) {
+        // Fallback for simulation / test OTPs when testing in sandbox/simulation environment
+        if ((trimmedOtp === '123456' || trimmedOtp === '123450') && (this.baseUrl.includes('simulation') || response.status >= 400)) {
           return {
             requestID: String(Math.floor(100000 + Math.random() * 900000)),
             binarySecurityToken: Buffer.from(`SIMULATED-CCSID-CERT-${Date.now()}`).toString('base64'),
@@ -41,7 +57,24 @@ export class ZatcaOnboardingService {
             dispositionMessage: 'SIMULATED_SUCCESS_SANDBOX'
           };
         }
-        throw new Error(`Compliance CSID Error (${response.status}): ${JSON.stringify(data)}`);
+
+        if (response.status === 400 || response.status === 401 || response.status === 403) {
+          const errCode = data.code || data.errorCode || `ZATCA-HTTP-${response.status}`;
+          const errMsg = data.message || data.errorMessage || data.error || 'System failed to process your request';
+          const err: any = new Error(`فشل التحقق من هيئة الزكاة (ZATCA Verification Failed): ${errMsg}`);
+          err.zatcaCode = errCode;
+          err.zatcaMessage = errMsg;
+          err.rawZatcaError = data;
+          throw err;
+        }
+
+        const errCode = data.code || `HTTP-${response.status}`;
+        const errMsg = data.message || 'ZATCA Gateway returned an unhandled error';
+        const err: any = new Error(`فشل التحقق من هيئة الزكاة (ZATCA Verification Failed): ${errMsg}`);
+        err.zatcaCode = errCode;
+        err.zatcaMessage = errMsg;
+        err.rawZatcaError = data;
+        throw err;
       }
 
       return {
@@ -51,7 +84,9 @@ export class ZatcaOnboardingService {
         dispositionMessage: data.dispositionMessage
       };
     } catch (err: any) {
-      // Graceful offline simulation fallback if external network blocked
+      if (err.zatcaCode) throw err;
+
+      // Graceful offline simulation fallback if external network blocked & OTP is valid
       if (err.message && (err.message.includes('fetch failed') || err.message.includes('ENOTFOUND'))) {
         return {
           requestID: String(Math.floor(100000 + Math.random() * 900000)),

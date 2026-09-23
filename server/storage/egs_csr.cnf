@@ -11,16 +11,16 @@ distinguished_name = dn
 
 [dn]
 C = SA
-OU = Riyadh Olaya
+OU = Riyadh Main Branch
 O = Saudi Flame Grill
-CN = TST-300049785700003-766f3721
+CN = TST-300049785700003-8b9d5c41
 
 [req_ext]
-certificateTemplateName = ASN1:PRINTABLESTRING:PREZATCA-Code-Signing
+certificateTemplateName = ASN1:PRINTABLESTRING:ZATCA-Code-Signing
 subjectAltName = dirName:alt_names
 
 [alt_names]
-SN = 1-POS|2-STANDALONE|3-766f3721-d683-4648-b298-126b38a52447
+SN = 1-POS|2-STANDALONE|3-8b9d5c41-8654-4770-9831-2911b333a101
 UID = 300049785700003
 title = 1100
 registeredAddress = Riyadh

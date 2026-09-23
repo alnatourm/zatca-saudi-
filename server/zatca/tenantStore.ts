@@ -16,7 +16,7 @@ export interface CompanyTenant {
   postalCode: string;
   egsUuid: string;
   environment: 'simulation' | 'production';
-  csidStatus: 'NOT_ONBOARDED' | 'COMPLIANCE_ACTIVE' | 'PRODUCTION_ACTIVE';
+  csidStatus: 'NOT_ONBOARDED' | 'CCSID_ACTIVE' | 'COMPLIANCE_ACTIVE' | 'PRODUCTION_ACTIVE';
   complianceRequestId?: string;
   productionRequestId?: string;
   binarySecurityToken?: string;    // Base64 CSID Cert

@@ -1,7 +1,9 @@
 {
-  "egsUuid": "766f3721-d683-4648-b298-126b38a52447",
+  "tenantId": "saudi-flame-grill",
+  "egsUuid": "8b9d5c41-8654-4770-9831-2911b333a101",
   "vatNumber": "300049785700003",
-  "companyName": "Saudi Flame Grill",
-  "branchName": "Riyadh Olaya",
-  "city": "Riyadh"
+  "companyName": "مطعم المذاق السعودي (Saudi Flame Grill)",
+  "branchName": "فرع العليا - الرياض",
+  "city": "الرياض",
+  "environment": "production"
 }
