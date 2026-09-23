@@ -116,6 +116,6 @@ businessCategory = ${params.businessCategory}
       cleanCsrBase64,
     };
   } catch (err: any) {
-    throw new Error(`Failed to generate ZATCA PKCS#10 CSR via OpenSSL: ${err.message || err}`);
+    throw new Error(`OpenSSL Execution Failed: System OpenSSL binary is mandatory for ZATCA PKCS#10 CSR generation. (${err.message})`);
   }
 }

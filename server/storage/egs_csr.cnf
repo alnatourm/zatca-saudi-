@@ -16,7 +16,7 @@ O = Saudi Flame Grill
 CN = TST-300049785700003-8b9d5c41
 
 [req_ext]
-certificateTemplateName = ASN1:PRINTABLESTRING:ZATCA-Code-Signing
+certificateTemplateName = ASN1:PRINTABLESTRING:PREZATCA-Code-Signing
 subjectAltName = dirName:alt_names
 
 [alt_names]

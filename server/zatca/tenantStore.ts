@@ -3,8 +3,8 @@ import path from 'path';
 import { getInitialPIH } from './crypto';
 
 export interface CompanyTenant {
-  id: string;                      // slug / uuid, e.g. "saudi-flame-grill"
-  name: string;                    // e.g. "مطعم المذاق السعودي (Saudi Flame Grill)"
+  id: string;                      // slug / uuid, e.g. "single-test-company"
+  name: string;                    // e.g. "Saudi Flame Grill"
   type: 'restaurant' | 'company';  // Restaurant (POS) vs General Commercial B2B
   vatNumber: string;               // 15-digit VAT
   crNumber: string;                // 10-digit CR
@@ -23,6 +23,7 @@ export interface CompanyTenant {
   secret?: string;                 // API Secret
   privateKeyPem?: string;          // secp256k1 key
   publicKeyPem?: string;
+  cleanCsrBase64?: string;
   icv: number;                     // Isolated monotonic counter
   pih: string;                     // Isolated previous invoice hash
   createdAt: string;
@@ -34,45 +35,26 @@ const TENANTS_FILE = path.join(STORAGE_DIR, 'tenants.json');
 function ensureStorage() {
   if (!fs.existsSync(STORAGE_DIR)) fs.mkdirSync(STORAGE_DIR, { recursive: true });
   if (!fs.existsSync(TENANTS_FILE)) {
-    // Seed initial demo tenants: 1 Restaurant + 1 B2B Company
+    // Single clean test tenant for strict failure verification
     const initialTenants: Record<string, CompanyTenant> = {
-      'saudi-flame-grill': {
-        id: 'saudi-flame-grill',
-        name: 'مطعم المذاق السعودي (Saudi Flame Grill)',
+      'single-test-company': {
+        id: 'single-test-company',
+        name: 'Saudi Flame Grill',
         type: 'restaurant',
         vatNumber: '300049785700003',
         crNumber: '1010884422',
-        branchName: 'فرع العليا - الرياض',
-        city: 'الرياض',
-        district: 'العليا',
-        streetName: 'طريق الملك فهد',
+        branchName: 'Riyadh Main Branch',
+        city: 'Riyadh',
+        district: 'Olaya',
+        streetName: 'King Fahd Road',
         buildingNumber: '2145',
         postalCode: '12211',
         egsUuid: '8b9d5c41-8654-4770-9831-2911b333a101',
         environment: 'simulation',
-        csidStatus: 'COMPLIANCE_ACTIVE',
-        icv: 0,
-        pih: getInitialPIH(),
-        createdAt: new Date().toISOString(),
-      },
-      'al-noor-trading': {
-        id: 'al-noor-trading',
-        name: 'شركة النور للتجارة والحلول التقنية',
-        type: 'company',
-        vatNumber: '300012345600003',
-        crNumber: '1010987654',
-        branchName: 'المركز الرئيسي',
-        city: 'جدة',
-        district: 'الروضة',
-        streetName: 'شارع الأمير سلطان',
-        buildingNumber: '4210',
-        postalCode: '23431',
-        egsUuid: '1f3c7e99-2311-4552-a199-0011bb22cc33',
-        environment: 'simulation',
         csidStatus: 'NOT_ONBOARDED',
         icv: 0,
-        pih: getInitialPIH(),
-        createdAt: new Date().toISOString(),
+        pih: 'NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==',
+        createdAt: '2026-09-23T09:00:00.000Z',
       },
     };
     fs.writeFileSync(TENANTS_FILE, JSON.stringify(initialTenants, null, 2));

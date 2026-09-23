@@ -15,6 +15,7 @@ export interface CompanyTenant {
   csidStatus: 'NOT_ONBOARDED' | 'CCSID_ACTIVE' | 'COMPLIANCE_ACTIVE' | 'PRODUCTION_ACTIVE';
   privateKeyPem?: string;
   publicKeyPem?: string;
+  cleanCsrBase64?: string;
   binarySecurityToken?: string;
   secret?: string;
   complianceRequestId?: string;

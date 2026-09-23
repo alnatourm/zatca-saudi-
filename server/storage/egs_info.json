@@ -1,9 +1,9 @@
 {
-  "tenantId": "saudi-flame-grill",
+  "tenantId": "single-test-company",
   "egsUuid": "8b9d5c41-8654-4770-9831-2911b333a101",
   "vatNumber": "300049785700003",
-  "companyName": "مطعم المذاق السعودي (Saudi Flame Grill)",
-  "branchName": "فرع العليا - الرياض",
-  "city": "الرياض",
-  "environment": "production"
+  "companyName": "Saudi Flame Grill",
+  "branchName": "Riyadh Main Branch",
+  "city": "Riyadh",
+  "environment": "simulation"
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { EGSState, TaxpayerDetails, CompanyTenant } from '../types';
 import { Language, translations } from '../i18n';
-import { ShieldCheck, Cpu, Key, Lock, CheckCircle2, AlertCircle, RefreshCw, Sparkles, Building, MapPin, Hash, KeyRound, Check, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, Cpu, Key, Lock, CheckCircle2, AlertCircle, RefreshCw, Sparkles, Building, MapPin, Hash, KeyRound, AlertTriangle } from 'lucide-react';
 
 interface EGSOnboardingTabProps {
   egsState: EGSState | null;
@@ -21,10 +21,10 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
   const t = translations[lang];
 
   const [taxpayerName, setTaxpayerName] = useState(
-    activeTenant?.name || egsState?.taxpayer?.taxpayerName || 'Al-Noor Retail & Trade LLC'
+    activeTenant?.name || egsState?.taxpayer?.taxpayerName || 'Saudi Flame Grill'
   );
   const [vatNumber, setVatNumber] = useState(
-    activeTenant?.vatNumber || egsState?.taxpayer?.vatNumber || '300012345600003'
+    activeTenant?.vatNumber || egsState?.taxpayer?.vatNumber || '300049785700003'
   );
   const [branchName, setBranchName] = useState(
     activeTenant?.branchName || egsState?.taxpayer?.branchName || 'Riyadh Main Branch'
@@ -35,21 +35,22 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
   const [otp, setOtp] = useState(egsState?.taxpayer?.otp || '123456');
 
   const [crNumber, setCrNumber] = useState(
-    activeTenant?.crNumber || egsState?.taxpayer?.crNumber || '1010987654'
+    activeTenant?.crNumber || egsState?.taxpayer?.crNumber || '1010884422'
   );
   const [streetName, setStreetName] = useState(
     activeTenant?.streetName || egsState?.taxpayer?.streetName || 'King Fahd Road'
   );
   const [buildingNumber, setBuildingNumber] = useState(
-    activeTenant?.buildingNumber || egsState?.taxpayer?.buildingNumber || '4210'
+    activeTenant?.buildingNumber || egsState?.taxpayer?.buildingNumber || '2145'
   );
   const [postalCode, setPostalCode] = useState(
     activeTenant?.postalCode || egsState?.taxpayer?.postalCode || '12211'
   );
   const [district, setDistrict] = useState(
-    activeTenant?.district || egsState?.taxpayer?.district || 'Olaya District'
+    activeTenant?.district || egsState?.taxpayer?.district || 'Olaya'
   );
 
+  const [generatedCsrBase64, setGeneratedCsrBase64] = useState<string>(activeTenant?.cleanCsrBase64 || '');
   const [formError, setFormError] = useState<{ title: string; code?: string; message: string; raw?: any } | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [complianceStatusMsg, setComplianceStatusMsg] = useState<string | null>(null);
@@ -67,8 +68,9 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
       if (activeTenant.buildingNumber) setBuildingNumber(activeTenant.buildingNumber);
       if (activeTenant.postalCode) setPostalCode(activeTenant.postalCode);
       if (activeTenant.district) setDistrict(activeTenant.district);
+      if (activeTenant.cleanCsrBase64) setGeneratedCsrBase64(activeTenant.cleanCsrBase64);
     }
-  }, [activeTenant?.id]);
+  }, [activeTenant?.id, activeTenant?.cleanCsrBase64]);
 
   const isVatValid = /^3\d{13}3$/.test(vatNumber.trim());
 
@@ -85,7 +87,7 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
     if (!isVatValid) {
       setFormError({
         title: 'Validation Error',
-        message: 'VAT Number must be exactly 15 digits, starting with 3 and ending with 3 (e.g. 300012345600003).',
+        message: 'VAT Number must be exactly 15 digits, starting with 3 and ending with 3 (e.g. 300049785700003).',
       });
       return;
     }
@@ -105,23 +107,29 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
     setIsLocalSubmitting(true);
 
     try {
-      // Step A: Generate PKCS#10 CSR with secp256k1 keypair
-      const csrRes = await fetch('/api/zatca/onboard/generate-csr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: activeTenant?.id,
-          vatNumber: vatNumber.trim(),
-          companyName: taxpayerName.trim(),
-          branchName: branchName.trim(),
-          city: city.trim(),
-          environment: activeTenant?.environment || 'simulation',
-        }),
-      });
+      let currentCsr = generatedCsrBase64 || activeTenant?.cleanCsrBase64 || '';
 
-      const csrData = await csrRes.json();
-      if (!csrRes.ok || !csrData.csrBase64) {
-        throw new Error(csrData.error || 'Failed to generate PKCS#10 CSR for EGS unit.');
+      // Step A: Generate PKCS#10 CSR if not generated yet
+      if (!currentCsr) {
+        const csrRes = await fetch('/api/zatca/onboard/generate-csr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId: activeTenant?.id,
+            vatNumber: vatNumber.trim(),
+            companyName: taxpayerName.trim(),
+            branchName: branchName.trim(),
+            city: city.trim(),
+            environment: activeTenant?.environment || 'simulation',
+          }),
+        });
+
+        const csrData = await csrRes.json();
+        if (!csrRes.ok || !csrData.csrBase64) {
+          throw new Error(csrData.error || 'Failed to generate PKCS#10 CSR for EGS unit.');
+        }
+        currentCsr = csrData.csrBase64;
+        setGeneratedCsrBase64(currentCsr);
       }
 
       // Step B: Exchange OTP directly with ZATCA Gateway
@@ -131,19 +139,19 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
         body: JSON.stringify({
           tenantId: activeTenant?.id,
           otp: otp.trim(),
-          csrBase64: csrData.csrBase64,
+          csrBase64: currentCsr,
           environment: activeTenant?.environment || 'simulation',
         }),
       });
 
       const otpData = await otpRes.json();
 
-      if (!otpRes.ok || !otpData.binarySecurityToken) {
+      if (!otpRes.ok || !otpData.credentials?.binarySecurityToken) {
         setFormError({
           title: lang === 'ar' ? 'فشل التحقق من هيئة الزكاة (ZATCA Verification Failed)' : 'ZATCA Verification Failed',
-          code: otpData.zatcaErrorCode || otpData.code || 'Invalid-OTP',
-          message: otpData.zatcaErrorMessage || otpData.error || 'The OTP provided is invalid, expired, or unverified by ZATCA.',
-          raw: otpData.rawZatcaError || null,
+          code: otpData.zatcaErrorCode || `HTTP-${otpRes.status}`,
+          message: otpData.error || otpData.message || 'The OTP provided is invalid, expired, or unverified by ZATCA.',
+          raw: otpData,
         });
         setIsLocalSubmitting(false);
         return;
@@ -208,21 +216,21 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
   };
 
   const handleFillSample = () => {
-    setTaxpayerName('Al-Noor Retail & Trade LLC');
-    setVatNumber('300012345600003');
-    setBranchName('Riyadh Main Branch - Olaya');
+    setTaxpayerName('Saudi Flame Grill');
+    setVatNumber('300049785700003');
+    setBranchName('Riyadh Main Branch');
     setCity('Riyadh');
     setOtp('123456');
-    setCrNumber('1010987654');
+    setCrNumber('1010884422');
     setStreetName('King Fahd Road');
-    setBuildingNumber('4210');
+    setBuildingNumber('2145');
     setPostalCode('12211');
-    setDistrict('Olaya District');
+    setDistrict('Olaya');
     setFormError(null);
   };
 
   const isSubmitting = isLoading || isLocalSubmitting;
-  const currentStatus = activeTenant?.csidStatus || (egsState?.isOnboarded ? 'CCSID_ACTIVE' : 'NOT_ONBOARDED');
+  const currentStatus = activeTenant?.csidStatus || 'NOT_ONBOARDED';
 
   return (
     <div className="space-y-8">
@@ -272,12 +280,12 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                   Error Code: <strong>{formError.code}</strong>
                 </div>
               )}
-              <p className="text-slate-800 text-xs leading-relaxed">{formError.message}</p>
+              <p className="text-slate-800 text-xs leading-relaxed font-mono break-all">{formError.message}</p>
             </div>
           )}
 
           {/* Success Banner */}
-          {successMsg && (
+          {successMsg && !formError && (
             <div className="mb-6 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs sm:text-sm p-4 rounded-xl space-y-2">
               <div className="flex items-center gap-2 font-bold text-emerald-800">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
@@ -301,7 +309,7 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                 type="text"
                 value={taxpayerName}
                 onChange={(e) => setTaxpayerName(e.target.value)}
-                placeholder="e.g. Al-Noor Retail & Trade LLC"
+                placeholder="Saudi Flame Grill"
                 className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-600 font-medium"
               />
             </div>
@@ -326,7 +334,7 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                   maxLength={15}
                   value={vatNumber}
                   onChange={(e) => setVatNumber(e.target.value.replace(/\D/g, ''))}
-                  placeholder="300012345600003"
+                  placeholder="300049785700003"
                   className={`w-full px-3 py-2.5 bg-slate-50 border rounded-lg text-sm font-mono tracking-wider ${
                     isVatValid
                       ? 'border-slate-300 focus:border-emerald-600 focus:ring-emerald-500/50'
@@ -469,14 +477,14 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                     ? 'bg-emerald-950 text-emerald-300 border-emerald-600'
                     : currentStatus === 'CCSID_ACTIVE' || currentStatus === 'COMPLIANCE_ACTIVE'
                     ? 'bg-blue-950 text-blue-300 border-blue-700/60'
-                    : 'bg-amber-950 text-amber-300 border-amber-700/60'
+                    : 'bg-slate-800 text-slate-300 border-slate-700'
                 }`}
               >
                 {currentStatus === 'PRODUCTION_ACTIVE'
                   ? 'PRODUCTION CSID ACTIVE'
                   : currentStatus === 'CCSID_ACTIVE' || currentStatus === 'COMPLIANCE_ACTIVE'
                   ? 'COMPLIANCE CSID ISSUED'
-                  : t.csidPending}
+                  : lang === 'ar' ? 'شهادة معلقة' : 'NOT ONBOARDED'}
               </span>
             </div>
 
@@ -506,7 +514,7 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
             </div>
 
             {/* Certificate Tokens & Serial */}
-            {activeTenant?.binarySecurityToken || egsState?.certificate ? (
+            {activeTenant?.binarySecurityToken && currentStatus !== 'NOT_ONBOARDED' ? (
               <div className="space-y-4 pt-4 border-t border-slate-800 text-xs">
                 <div>
                   <span className="text-slate-400 block mb-0.5">{t.csidSerial}</span>
@@ -518,21 +526,23 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                 <div>
                   <span className="text-slate-400 block mb-0.5">{t.complianceCsidToken}</span>
                   <p className="font-mono text-emerald-400 truncate bg-slate-950 p-2 rounded border border-slate-800">
-                    {activeTenant?.complianceRequestId || egsState?.certificate?.complianceCSID || 'CCSID-ACTIVE-REQUEST-ID'}
+                    {activeTenant?.complianceRequestId || 'CCSID-ACTIVE-REQUEST-ID'}
                   </p>
                 </div>
 
                 <div>
                   <span className="text-slate-400 block mb-0.5">{t.binarySecurityToken}</span>
                   <div className="font-mono text-[10px] text-slate-400 bg-slate-950 p-2 rounded border border-slate-800 max-h-20 overflow-y-auto break-all">
-                    {activeTenant?.binarySecurityToken || egsState?.certificate?.binarySecurityToken || 'MIICWTCCAf4CAQAwgZsxCzAJBgNVBAYT...'}
+                    {activeTenant.binarySecurityToken}
                   </div>
                 </div>
               </div>
             ) : (
               <div className="bg-slate-950/80 p-6 rounded-lg border border-slate-800 text-center space-y-2">
                 <Lock className="w-8 h-8 text-amber-500 mx-auto" />
-                <p className="text-xs text-slate-300 font-medium">{t.noCertActive}</p>
+                <p className="text-xs text-slate-300 font-medium">
+                  {lang === 'ar' ? 'لم يتم إصدار شهادة CSID لهذه المنشأة بعد' : t.noCertActive}
+                </p>
               </div>
             )}
 
@@ -573,11 +583,22 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                       const res = await fetch('/api/zatca/onboard/generate-csr', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ tenantId: activeTenant?.id, environment: 'production', vatNumber, companyName: taxpayerName, branchName, city })
+                        body: JSON.stringify({
+                          tenantId: activeTenant?.id,
+                          environment: 'production',
+                          vatNumber: vatNumber.trim(),
+                          companyName: taxpayerName.trim(),
+                          branchName: branchName.trim(),
+                          city: city.trim(),
+                        }),
                       });
                       const d = await res.json();
-                      if (d.status === 'CSR_GENERATED') setSuccessMsg(lang === 'ar' ? 'تم توليد ملف CSR للإنتاج بنجاح' : 'Production CSR generated successfully');
-                      else setFormError({ title: 'CSR Error', message: d.error || 'Failed to generate CSR' });
+                      if (res.ok && d.status === 'CSR_GENERATED' && d.csrBase64) {
+                        setGeneratedCsrBase64(d.csrBase64);
+                        setSuccessMsg(lang === 'ar' ? 'تم توليد ملف CSR للإنتاج بنجاح' : 'Production CSR generated successfully');
+                      } else {
+                        setFormError({ title: 'CSR Error', message: d.error || 'Failed to generate CSR' });
+                      }
                     } catch (e: any) { setFormError({ title: 'CSR Error', message: e.message }); }
                   }}
                   className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold rounded text-[11px] shrink-0"
@@ -597,14 +618,28 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                   onClick={async () => {
                     setSuccessMsg(null); setFormError(null);
                     try {
+                      const csrToUse = generatedCsrBase64 || activeTenant?.cleanCsrBase64 || '';
                       const res = await fetch('/api/zatca/onboard/exchange-otp', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ tenantId: activeTenant?.id, otp: otp.trim(), environment: 'production' })
+                        body: JSON.stringify({
+                          tenantId: activeTenant?.id,
+                          otp: otp.trim(),
+                          csrBase64: csrToUse,
+                          environment: 'production',
+                        }),
                       });
                       const d = await res.json();
-                      if (d.status === 'CCSID_ACTIVE') setSuccessMsg(lang === 'ar' ? 'تم استلام شهادة Compliance CSID بنجاح' : 'Compliance CSID Issued');
-                      else setFormError({ title: 'OTP Exchange Error', code: d.zatcaErrorCode || 'Invalid-OTP', message: d.zatcaErrorMessage || d.error || 'OTP Exchange failed' });
+                      if (res.ok && d.credentials?.binarySecurityToken) {
+                        setSuccessMsg(lang === 'ar' ? 'تم استلام شهادة Compliance CSID بنجاح' : 'Compliance CSID Issued');
+                      } else {
+                        setFormError({
+                          title: lang === 'ar' ? 'فشل التحقق من هيئة الزكاة (ZATCA Verification Failed)' : 'ZATCA Verification Failed',
+                          code: d.zatcaErrorCode || `HTTP-${res.status}`,
+                          message: d.error || d.message || 'OTP Exchange failed',
+                          raw: d,
+                        });
+                      }
                     } catch (e: any) { setFormError({ title: 'OTP Exchange Error', message: e.message }); }
                   }}
                   className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-[11px] shrink-0"
@@ -630,8 +665,11 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                         body: JSON.stringify({ tenantId: activeTenant?.id, vatNumber, companyName: taxpayerName })
                       });
                       const d = await res.json();
-                      if (d.status === 'COMPLIANCE_TESTS_COMPLETED') setSuccessMsg(lang === 'ar' ? 'اجتازت جميع المستندات الـ 4 فحص الالتزام بنجاح!' : 'All 4 compliance documents passed validation!');
-                      else setFormError({ title: 'Compliance Error', message: d.error || 'Compliance checks failed' });
+                      if (res.ok && d.status === 'COMPLIANCE_TESTS_COMPLETED') {
+                        setSuccessMsg(lang === 'ar' ? 'اجتازت جميع المستندات الـ 4 فحص الالتزام بنجاح!' : 'All 4 compliance documents passed validation!');
+                      } else {
+                        setFormError({ title: 'Compliance Error', message: d.error || 'Compliance checks failed' });
+                      }
                     } catch (e: any) { setFormError({ title: 'Compliance Error', message: e.message }); }
                   }}
                   className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded text-[11px] shrink-0"
@@ -657,8 +695,11 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                         body: JSON.stringify({ tenantId: activeTenant?.id, environment: 'production' })
                       });
                       const d = await res.json();
-                      if (d.status === 'PRODUCTION_READY') setSuccessMsg(lang === 'ar' ? 'تهانينا! تم إصدار شهادة الإنتاج PCSID بنجاح والنظام جاهز لإصدار الفواتير الحية' : 'Production CSID issued successfully!');
-                      else setFormError({ title: 'PCSID Upgrade Error', message: d.error || 'PCSID upgrade failed' });
+                      if (res.ok && d.status === 'PRODUCTION_READY') {
+                        setSuccessMsg(lang === 'ar' ? 'تهانينا! تم إصدار شهادة الإنتاج PCSID بنجاح والنظام جاهز لإصدار الفواتير الحية' : 'Production CSID issued successfully!');
+                      } else {
+                        setFormError({ title: 'PCSID Upgrade Error', message: d.error || 'PCSID upgrade failed' });
+                      }
                     } catch (e: any) { setFormError({ title: 'PCSID Upgrade Error', message: e.message }); }
                   }}
                   className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded text-[11px] shrink-0"

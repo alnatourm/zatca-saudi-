@@ -2,7 +2,7 @@ import { EGSState, TaxpayerDetails, CSIDCertificate, GeneratedInvoiceResponse } 
 import { generateEGSKeys, getInitialPIH } from './crypto';
 import { getAllTenants, getTenantById, saveTenant, updateTenantChain, CompanyTenant } from './tenantStore';
 
-let activeTenantId: string = 'saudi-flame-grill';
+let activeTenantId: string = 'single-test-company';
 
 export function getActiveTenantId(): string {
   return activeTenantId;
