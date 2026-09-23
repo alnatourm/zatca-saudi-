@@ -1,105 +1,158 @@
 import { EGSState, TaxpayerDetails, CSIDCertificate, GeneratedInvoiceResponse } from './types';
 import { generateEGSKeys, getInitialPIH } from './crypto';
+import { getAllTenants, getTenantById, saveTenant, updateTenantChain, CompanyTenant } from './tenantStore';
 
-// Default initial onboarded state or blank state
-let state: EGSState = {
-  isOnboarded: true,
-  egsUuid: 'EGS-SA-982144-88',
-  taxpayer: {
-    taxpayerName: 'Al-Noor Retail & Trade LLC',
-    vatNumber: '300012345600003',
-    branchName: 'Riyadh Main Branch',
-    city: 'Riyadh',
-    otp: '123456',
-    crNumber: '1010987654',
-    streetName: 'King Fahd Road',
-    buildingNumber: '4210',
-    postalCode: '12211',
-    district: 'Olaya District',
-  },
-  certificate: {
-    serialNumber: 'ZATCA-CSID-2026-990142',
-    issueDate: '2026-01-15',
-    expiryDate: '2027-01-15',
-    environment: 'Simulation',
-    binarySecurityToken: 'MIIBiTCCASoCCQCW38...ZATCA_SIMULATION_TOKEN',
-    publicKeyPem: '-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...\n-----END PUBLIC KEY-----',
-    privateKeyPem: '-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEH...\n-----END PRIVATE KEY-----',
-    complianceCSID: 'CSID-COMPLIANCE-88219412',
-    productionCSID: 'CSID-PRODUCTION-99210041',
-    status: 'ACTIVE',
-  },
-  icv: 0,
-  pih: getInitialPIH(),
-  lastUpdated: new Date().toISOString(),
-};
+let activeTenantId: string = 'saudi-flame-grill';
 
-const invoiceStore: GeneratedInvoiceResponse[] = [];
-
-export function getEGSState(): EGSState {
-  return { ...state };
+export function getActiveTenantId(): string {
+  return activeTenantId;
 }
 
-export function onboardEGS(taxpayerInput: TaxpayerDetails): EGSState {
-  const { publicKey, privateKey } = generateEGSKeys();
-  const serialNum = `CSID-KSA-${Math.floor(100000 + Math.random() * 900000)}`;
+export function setActiveTenantId(tenantId: string): CompanyTenant {
+  const tenant = getTenantById(tenantId);
+  if (!tenant) throw new Error(`Tenant not found: ${tenantId}`);
+  activeTenantId = tenantId;
+  return tenant;
+}
+
+export function getEGSState(tenantId?: string): EGSState {
+  const targetId = tenantId || activeTenantId;
+  const tenant = getTenantById(targetId) || getAllTenants()[0];
+
+  if (!tenant) {
+    return {
+      isOnboarded: false,
+      egsUuid: 'EGS-UUID-DEFAULT',
+      taxpayer: {
+        taxpayerName: 'Default Taxpayer',
+        vatNumber: '300049785700003',
+        branchName: 'Main Branch',
+        city: 'Riyadh',
+      },
+      certificate: null,
+      icv: 0,
+      pih: getInitialPIH(),
+      lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  const { publicKey, privateKey } = tenant.privateKeyPem && tenant.publicKeyPem
+    ? { publicKey: tenant.publicKeyPem, privateKey: tenant.privateKeyPem }
+    : generateEGSKeys();
 
   const cert: CSIDCertificate = {
-    serialNumber: serialNum,
-    issueDate: new Date().toISOString().split('T')[0],
+    serialNumber: `CSID-${tenant.id}`,
+    issueDate: tenant.createdAt.split('T')[0],
     expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    environment: 'Simulation',
-    binarySecurityToken: Buffer.from(`ZATCA_TOKEN_${serialNum}_${taxpayerInput.vatNumber}`).toString('base64'),
+    environment: tenant.environment === 'production' ? 'Production' : 'Simulation',
+    binarySecurityToken: tenant.binarySecurityToken || Buffer.from(`TOKEN_${tenant.id}`).toString('base64'),
     publicKeyPem: publicKey,
     privateKeyPem: privateKey,
-    complianceCSID: `CSID-COMP-${Math.floor(100000 + Math.random() * 900000)}`,
-    productionCSID: `CSID-PROD-${Math.floor(100000 + Math.random() * 900000)}`,
-    status: 'ACTIVE',
+    complianceCSID: tenant.complianceRequestId || `CSID-COMP-${tenant.id}`,
+    productionCSID: tenant.productionRequestId || `CSID-PROD-${tenant.id}`,
+    status: tenant.csidStatus === 'NOT_ONBOARDED' ? 'REVOKED' : 'ACTIVE',
   };
 
-  state = {
-    isOnboarded: true,
-    egsUuid: `EGS-UUID-${Math.floor(100000 + Math.random() * 900000)}`,
+  return {
+    isOnboarded: tenant.csidStatus !== 'NOT_ONBOARDED',
+    egsUuid: tenant.egsUuid,
     taxpayer: {
-      ...taxpayerInput,
-      crNumber: taxpayerInput.crNumber || '1010123456',
-      streetName: taxpayerInput.streetName || 'Olaya Main Street',
-      buildingNumber: taxpayerInput.buildingNumber || '1010',
-      postalCode: taxpayerInput.postalCode || '12211',
-      district: taxpayerInput.district || 'Al Olaya',
+      taxpayerName: tenant.name,
+      vatNumber: tenant.vatNumber,
+      branchName: tenant.branchName,
+      city: tenant.city,
+      crNumber: tenant.crNumber,
+      streetName: tenant.streetName,
+      buildingNumber: tenant.buildingNumber,
+      postalCode: tenant.postalCode,
+      district: tenant.district,
     },
     certificate: cert,
-    icv: 0,
-    pih: getInitialPIH(),
-    lastUpdated: new Date().toISOString(),
+    icv: tenant.icv,
+    pih: tenant.pih || getInitialPIH(),
+    lastUpdated: tenant.createdAt,
   };
-
-  return getEGSState();
 }
 
-export function updateStateAfterInvoice(newHashBase64: string): { icv: number; pih: string } {
-  state.icv += 1;
-  state.pih = newHashBase64;
-  state.lastUpdated = new Date().toISOString();
-  return { icv: state.icv, pih: state.pih };
+const invoiceStore: Record<string, GeneratedInvoiceResponse[]> = {};
+
+// Atomic sequence lock to prevent ICV sequence gaps or race conditions
+let lockPromise: Promise<void> = Promise.resolve();
+
+export async function acquireSequenceLock<T>(fn: () => T | Promise<T>): Promise<T> {
+  let release: () => void;
+  const nextLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  const previousLock = lockPromise;
+  lockPromise = (async () => {
+    await previousLock;
+    await nextLock;
+  })();
+
+  await previousLock;
+  try {
+    return await fn();
+  } finally {
+    release!();
+  }
 }
 
-export function saveInvoice(invoice: GeneratedInvoiceResponse) {
-  invoiceStore.unshift(invoice); // recent first
+export function onboardEGS(taxpayerInput: TaxpayerDetails, tenantId?: string): EGSState {
+  const targetId = tenantId || activeTenantId;
+  const tenant = getTenantById(targetId);
+  const { publicKey, privateKey } = generateEGSKeys();
+
+  if (tenant) {
+    tenant.name = taxpayerInput.taxpayerName || tenant.name;
+    tenant.vatNumber = taxpayerInput.vatNumber || tenant.vatNumber;
+    tenant.branchName = taxpayerInput.branchName || tenant.branchName;
+    tenant.city = taxpayerInput.city || tenant.city;
+    tenant.crNumber = taxpayerInput.crNumber || tenant.crNumber;
+    tenant.streetName = taxpayerInput.streetName || tenant.streetName;
+    tenant.buildingNumber = taxpayerInput.buildingNumber || tenant.buildingNumber;
+    tenant.postalCode = taxpayerInput.postalCode || tenant.postalCode;
+    tenant.district = taxpayerInput.district || tenant.district;
+    tenant.publicKeyPem = publicKey;
+    tenant.privateKeyPem = privateKey;
+    tenant.binarySecurityToken = Buffer.from(`ZATCA_TOKEN_${tenant.id}_${tenant.vatNumber}`).toString('base64');
+    tenant.csidStatus = 'COMPLIANCE_ACTIVE';
+    saveTenant(tenant);
+  }
+
+  return getEGSState(targetId);
 }
 
-export function getInvoiceList(): GeneratedInvoiceResponse[] {
-  return [...invoiceStore];
+export function updateStateAfterInvoice(newHashBase64: string, tenantId?: string): { icv: number; pih: string } {
+  const targetId = tenantId || activeTenantId;
+  return updateTenantChain(targetId, newHashBase64);
 }
 
-export function getInvoiceById(id: string): GeneratedInvoiceResponse | undefined {
-  return invoiceStore.find((inv) => inv.id === id || inv.uuid === id);
+export function saveInvoice(invoice: GeneratedInvoiceResponse, tenantId?: string) {
+  const targetId = tenantId || activeTenantId;
+  if (!invoiceStore[targetId]) invoiceStore[targetId] = [];
+  invoiceStore[targetId].unshift(invoice); // recent first
 }
 
-export function resetEGSState(): EGSState {
-  state.icv = 0;
-  state.pih = getInitialPIH();
-  state.lastUpdated = new Date().toISOString();
-  invoiceStore.length = 0; // Clear invoice history
-  return getEGSState();
+export function getInvoiceList(tenantId?: string): GeneratedInvoiceResponse[] {
+  const targetId = tenantId || activeTenantId;
+  return [...(invoiceStore[targetId] || [])];
+}
+
+export function getInvoiceById(id: string, tenantId?: string): GeneratedInvoiceResponse | undefined {
+  const targetId = tenantId || activeTenantId;
+  return (invoiceStore[targetId] || []).find((inv) => inv.id === id || inv.uuid === id);
+}
+
+export function resetEGSState(tenantId?: string): EGSState {
+  const targetId = tenantId || activeTenantId;
+  const tenant = getTenantById(targetId);
+  if (tenant) {
+    tenant.icv = 0;
+    tenant.pih = getInitialPIH();
+    saveTenant(tenant);
+  }
+  invoiceStore[targetId] = [];
+  return getEGSState(targetId);
 }

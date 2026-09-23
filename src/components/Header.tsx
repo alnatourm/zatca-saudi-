@@ -1,7 +1,7 @@
 import React from 'react';
-import { EGSState } from '../types';
+import { EGSState, CompanyTenant } from '../types';
 import { Language, translations } from '../i18n';
-import { ShieldCheck, ShieldAlert, FileCode2, QrCode, Cpu, Hash, Building2, Languages } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, FileCode2, QrCode, Cpu, Hash, Building2, Languages, PlusCircle, Store } from 'lucide-react';
 
 interface HeaderProps {
   egsState: EGSState | null;
@@ -10,6 +10,10 @@ interface HeaderProps {
   onOpenQRDecoder: () => void;
   lang: Language;
   setLang: (lang: Language) => void;
+  tenants?: CompanyTenant[];
+  activeTenantId?: string;
+  onSelectTenant?: (tenantId: string) => void;
+  onOpenAddTenantModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +23,10 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenQRDecoder,
   lang,
   setLang,
+  tenants = [],
+  activeTenantId = '',
+  onSelectTenant = () => {},
+  onOpenAddTenantModal = () => {},
 }) => {
   const t = translations[lang];
   const isOnboarded = egsState?.isOnboarded ?? false;
@@ -37,7 +45,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div>
               <div className="flex items-center space-x-2 rtl:space-x-reverse">
                 <span className="bg-emerald-900/80 text-emerald-300 text-xs font-semibold px-2 py-0.5 rounded border border-emerald-700/50">
-                  ZATCA Phase 2
+                  ZATCA Phase 2 SaaS
                 </span>
                 <span className="text-slate-400 text-xs font-mono">{t.appSubTitle}</span>
               </div>
@@ -50,8 +58,38 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Quick Info Pills & Language Toggle */}
+          {/* Tenant Switcher & Tools Bar */}
           <div className="flex flex-wrap items-center gap-3">
+
+            {/* SaaS Tenant Selector Dropdown */}
+            {tenants.length > 0 && (
+              <div className="flex items-center gap-2 bg-slate-800/90 border border-slate-700 rounded-lg px-2.5 py-1 shadow-sm">
+                <Store className="w-4 h-4 text-emerald-400 shrink-0" />
+                <label className="text-xs text-slate-400 font-medium whitespace-nowrap">
+                  {lang === 'ar' ? 'المنشأة:' : 'Tenant:'}
+                </label>
+                <select 
+                  value={activeTenantId} 
+                  onChange={(e) => onSelectTenant(e.target.value)}
+                  className="bg-slate-900 border border-slate-700 text-white rounded px-2 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-emerald-500 max-w-[220px] truncate"
+                >
+                  {tenants.map((tItem) => (
+                    <option key={tItem.id} value={tItem.id}>
+                      {tItem.type === 'restaurant' ? '🍴 ' : '🏢 '} {tItem.name} ({tItem.vatNumber})
+                    </option>
+                  ))}
+                </select>
+                
+                <button
+                  onClick={onOpenAddTenantModal}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-2.5 py-1 rounded font-medium flex items-center gap-1 shadow-sm transition whitespace-nowrap"
+                  title="إضافة منشأة أو مطعم جديد"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  <span>{lang === 'ar' ? 'إضافة منشأة' : 'Add Tenant'}</span>
+                </button>
+              </div>
+            )}
             
             {/* Language Switcher Button */}
             <button

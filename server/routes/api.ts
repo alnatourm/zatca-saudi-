@@ -22,7 +22,12 @@ import {
   getInvoiceList,
   getInvoiceById,
   resetEGSState,
+  acquireSequenceLock,
+  getActiveTenantId,
+  setActiveTenantId,
 } from '../zatca/egsStore';
+import { getAllTenants, getTenantById, saveTenant, updateTenantChain, CompanyTenant } from '../zatca/tenantStore';
+import { reportingQueue } from '../services/zatcaQueue';
 import { generateAndRenderZATCAQR } from '../qr';
 import {
   generateZATCATLVBase64,
@@ -40,7 +45,73 @@ const router = Router();
 // GET EGS state and device status
 router.get('/egs/status', (_req: Request, res: Response) => {
   const egs = getEGSState();
-  res.json({ success: true, egs });
+  res.json({ success: true, egs, activeTenantId: getActiveTenantId() });
+});
+
+// GET List all restaurants and companies (Multi-Tenant)
+router.get('/tenants', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    activeTenantId: getActiveTenantId(),
+    tenants: getAllTenants(),
+  });
+});
+
+// POST Select active tenant
+router.post('/tenants/select', (req: Request, res: Response) => {
+  try {
+    const { tenantId } = req.body;
+    if (!tenantId) {
+      return res.status(400).json({ error: 'tenantId is required' });
+    }
+    const tenant = setActiveTenantId(tenantId);
+    res.json({
+      success: true,
+      activeTenantId: tenant.id,
+      tenant,
+      egs: getEGSState(tenant.id),
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST Register a new Restaurant or Company
+router.post('/tenants/create', (req: Request, res: Response) => {
+  try {
+    const { name, type, vatNumber, crNumber, branchName, city, district, streetName, buildingNumber, postalCode } = req.body;
+    
+    if (!name || !vatNumber || vatNumber.length !== 15) {
+      return res.status(400).json({ error: 'Valid company name and 15-digit VAT are required.' });
+    }
+
+    const tenantId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || `org-${Date.now()}`;
+    const newTenant: CompanyTenant = {
+      id: tenantId,
+      name,
+      type: type === 'restaurant' ? 'restaurant' : 'company',
+      vatNumber,
+      crNumber: crNumber || '1010000000',
+      branchName: branchName || 'الفرع الرئيسي',
+      city: city || 'الرياض',
+      district: district || 'العليا',
+      streetName: streetName || 'طريق الملك فهد',
+      buildingNumber: buildingNumber || '1234',
+      postalCode: postalCode || '12211',
+      egsUuid: crypto.randomUUID(),
+      environment: 'simulation',
+      csidStatus: 'NOT_ONBOARDED',
+      icv: 0,
+      pih: 'NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==',
+      createdAt: new Date().toISOString(),
+    };
+
+    saveTenant(newTenant);
+    setActiveTenantId(newTenant.id);
+    res.json({ success: true, tenant: newTenant, activeTenantId: newTenant.id });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST Onboard EGS device
@@ -85,171 +156,246 @@ router.post('/egs/reset', (_req: Request, res: Response) => {
   });
 });
 
+// POST Import POS or Excel CSV/JSON file into line items
+router.post('/invoice/import-pos-file', (req: Request, res: Response) => {
+  try {
+    const { fileContent, fileType = 'csv' } = req.body;
+    if (!fileContent) {
+      return res.status(400).json({ success: false, error: 'File content is required' });
+    }
+
+    const lineItems: Array<{ id: string; itemName: string; quantity: number; unitPrice: number; vatCategory: 'S'; vatRate: number; discount: number }> = [];
+
+    if (fileType === 'csv') {
+      const rows = fileContent.trim().split(/\r?\n/);
+      const firstRowLower = (rows[0] || '').toLowerCase();
+      const startIndex = firstRowLower.includes('item') || firstRowLower.includes('name') || firstRowLower.includes('صنف') || firstRowLower.includes('اسم') ? 1 : 0;
+
+      for (let i = startIndex; i < rows.length; i++) {
+        const row = rows[i].trim();
+        if (!row) continue;
+        const cols = row.split(',').map((c: string) => c.trim().replace(/^"|"$/g, ''));
+        if (cols.length >= 3) {
+          const itemName = cols[0];
+          const quantity = parseFloat(cols[1]) || 1;
+          const unitPrice = parseFloat(cols[2]) || 0;
+          const discount = parseFloat(cols[3]) || 0;
+          const vatRate = parseFloat(cols[4]) || 15;
+
+          lineItems.push({
+            id: String(lineItems.length + 1),
+            itemName,
+            quantity,
+            unitPrice,
+            discount,
+            vatCategory: 'S',
+            vatRate,
+          });
+        }
+      }
+    } else if (fileType === 'json') {
+      const parsed = typeof fileContent === 'string' ? JSON.parse(fileContent) : fileContent;
+      const rawList = Array.isArray(parsed) ? parsed : parsed.items || parsed.lineItems || [];
+      rawList.forEach((item: any, idx: number) => {
+        lineItems.push({
+          id: String(idx + 1),
+          itemName: item.name || item.itemName || item.description || `Item ${idx + 1}`,
+          quantity: Number(item.quantity || item.qty || 1),
+          unitPrice: Number(item.price || item.unitPrice || 0),
+          discount: Number(item.discount || 0),
+          vatCategory: 'S',
+          vatRate: Number(item.vatRate || 15),
+        });
+      });
+    }
+
+    return res.json({
+      success: true,
+      importedCount: lineItems.length,
+      lineItems,
+    });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: `Failed to parse file: ${err.message}` });
+  }
+});
+
 // POST Generate & Submit Invoice
 router.post('/invoice/generate', async (req: Request, res: Response) => {
   try {
-    const requestData: InvoiceRequest = req.body;
-    const egs = getEGSState();
+    const { tenantId, ...requestData }: InvoiceRequest & { tenantId?: string } = req.body;
 
-    if (!egs.isOnboarded || !egs.certificate) {
-      res.status(400).json({
-        success: false,
-        error: 'EGS Device is not onboarded. Please onboard device first in the EGS Onboarding tab.',
+    const result = await acquireSequenceLock(async () => {
+      const activeId = tenantId || getActiveTenantId();
+      const tenant = getTenantById(activeId);
+      const egs = getEGSState(activeId);
+
+      if (!tenant) {
+        throw new Error(`Tenant not found: ${activeId}`);
+      }
+
+      // Financial calculation
+      let subtotalSAR = 0;
+      let vatTotalSAR = 0;
+
+      const items = (requestData.lineItems || []).map((item) => {
+        const lineSub = item.quantity * item.unitPrice - (item.discount || 0);
+        const lineVat = lineSub * (item.vatRate / 100);
+        subtotalSAR += lineSub;
+        vatTotalSAR += lineVat;
+        return { ...item };
       });
-      return;
-    }
 
-    // 1. Business rules validation
-    const validationResult = validateZATCABusinessRules({
-      request: requestData,
-      taxpayer: egs.taxpayer,
-      expectedPih: egs.pih,
-    });
+      const grandTotalSAR = subtotalSAR + vatTotalSAR;
 
-    if (!validationResult.isValid) {
-      res.status(422).json({
-        success: false,
-        error: 'ZATCA Compliance Validation Failed',
-        logs: validationResult.logs,
+      // Serial Number & UUID
+      const nextIcv = tenant.icv + 1;
+      const invoiceNumber = `INV-${new Date().getFullYear()}-${String(nextIcv).padStart(5, '0')}`;
+      const uuid = crypto.randomUUID();
+      const currentPih = tenant.pih;
+      const issueTimestamp = `${requestData.issueDate || new Date().toISOString().split('T')[0]}T${requestData.issueTime || new Date().toISOString().split('T')[1].slice(0, 8)}Z`;
+
+      const taxpayerInfo = {
+        taxpayerName: tenant.name,
+        vatNumber: tenant.vatNumber,
+        branchName: tenant.branchName,
+        city: tenant.city,
+        streetName: tenant.streetName,
+        buildingNumber: tenant.buildingNumber,
+        postalCode: tenant.postalCode,
+        district: tenant.district,
+        crNumber: tenant.crNumber,
+      };
+
+      // Pre-Signature Canonical XML Payload
+      const tempXmlForHash = buildZATCAUBLXml({
+        invoiceNumber,
+        uuid,
+        icv: nextIcv,
+        pih: currentPih,
+        digitalSignatureBase64: '',
+        qrCodeBase64TLV: '',
+        request: requestData,
+        taxpayer: taxpayerInfo,
+        subtotalSAR,
+        vatTotalSAR,
+        grandTotalSAR,
+        includeSignatureBlocks: false,
       });
-      return;
-    }
 
-    // 2. Financial calculation
-    let subtotalSAR = 0;
-    let vatTotalSAR = 0;
+      const invoiceHashBase64 = computeZatcaInvoiceHash(tempXmlForHash);
 
-    const items = (requestData.lineItems || []).map((item) => {
-      const lineSub = item.quantity * item.unitPrice - (item.discount || 0);
-      const lineVat = lineSub * (item.vatRate / 100);
-      subtotalSAR += lineSub;
-      vatTotalSAR += lineVat;
-      return { ...item };
+      // Digital signature
+      const privateKeyPem = tenant.privateKeyPem || egs.certificate?.privateKeyPem || '';
+      const publicKeyPem = tenant.publicKeyPem || egs.certificate?.publicKeyPem || '';
+      const certToken = tenant.binarySecurityToken || egs.certificate?.binarySecurityToken || '';
+
+      const digitalSignatureBase64 = privateKeyPem ? signInvoiceHash(invoiceHashBase64, privateKeyPem) : '';
+
+      // Generate TLV & QR Code
+      const { base64TLV, dataUrl: qrCodeDataUrl } = await generateAndRenderZATCAQR({
+        sellerName: tenant.name,
+        vatNumber: tenant.vatNumber,
+        timestamp: issueTimestamp,
+        totalAmount: grandTotalSAR.toFixed(2),
+        vatAmount: vatTotalSAR.toFixed(2),
+        xmlHash: invoiceHashBase64,
+        ecdsaSignature: digitalSignatureBase64,
+        publicKey: publicKeyPem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\n/g, ''),
+        certificateStamp: certToken,
+      });
+
+      const tlvResult = generateZATCATLVBase64({
+        sellerName: tenant.name,
+        vatNumber: tenant.vatNumber,
+        timestamp: issueTimestamp,
+        totalWithVat: grandTotalSAR.toFixed(2),
+        vatTotal: vatTotalSAR.toFixed(2),
+        invoiceHashBase64,
+        digitalSignatureBase64,
+        publicKeyPemOrBase64: publicKeyPem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\n/g, ''),
+        csidCertificateBase64: certToken,
+      });
+
+      // Final canonical UBL 2.1 XML
+      const finalUblXml = buildZATCAUBLXml({
+        invoiceNumber,
+        uuid,
+        icv: nextIcv,
+        pih: currentPih,
+        qrCodeBase64TLV: tlvResult.base64TLV,
+        digitalSignatureBase64,
+        invoiceHashBase64,
+        csidCertificateBase64: certToken,
+        request: requestData,
+        taxpayer: taxpayerInfo,
+        subtotalSAR,
+        vatTotalSAR,
+        grandTotalSAR,
+        includeSignatureBlocks: true,
+      });
+
+      // Update Tenant's isolated hash chain
+      const updatedChain = updateTenantChain(tenant.id, invoiceHashBase64);
+
+      // Background Queueing for B2C Simplified Invoices
+      if (requestData.invoiceType === '0200000') {
+        reportingQueue.enqueue({
+          id: uuid,
+          uuid,
+          signedXmlBase64: Buffer.from(finalUblXml, 'utf8').toString('base64'),
+          invoiceHash: invoiceHashBase64,
+          pcsidToken: certToken,
+          secret: 'zatca-simulated-secret-key',
+        });
+      }
+
+      const complianceStatus = requestData.invoiceType === '0100000' ? 'CLEARED' : 'REPORTED';
+
+      const generatedResponse: GeneratedInvoiceResponse = {
+        id: uuid,
+        uuid,
+        invoiceType: requestData.invoiceType,
+        invoiceTypeLabel: requestData.invoiceType === '0100000' ? 'Standard Tax Invoice (B2B - فاتورة ضريبية)' : 'Simplified Tax Invoice (B2C - فاتورة ضريبية مبسطة)',
+        invoiceNumber,
+        icv: nextIcv,
+        pih: currentPih,
+        invoiceHash: invoiceHashBase64,
+        issueTimestamp,
+        taxpayer: taxpayerInfo,
+        customer: requestData.customer,
+        lineItems: items,
+        subtotalSAR,
+        vatTotalSAR,
+        grandTotalSAR,
+        qrCodeBase64TLV: tlvResult.base64TLV,
+        qrCodeDataUrl,
+        tlvTags: tlvResult.tags,
+        digitalSignatureBase64,
+        ublXml: finalUblXml,
+        complianceStatus,
+        complianceLogs: [],
+        createdAt: new Date().toISOString(),
+      };
+
+      saveInvoice(generatedResponse, tenant.id);
+
+      return {
+        success: true,
+        tenantId: tenant.id,
+        message: requestData.invoiceType === '0100000'
+          ? 'Invoice CLEARED by ZATCA Phase 2 Clearance API.'
+          : 'Simplified Invoice signed & REPORTED to ZATCA Fatoora Platform.',
+        invoice: generatedResponse,
+        updatedEgsState: getEGSState(tenant.id),
+        updatedChain,
+      };
     });
 
-    const grandTotalSAR = subtotalSAR + vatTotalSAR;
-
-    // 3. Serial Number & UUID (Rule BR-KSA-03: RFC 4122 v4 UUID)
-    const currentIcv = egs.icv + 1;
-    const invoiceNumber = `INV-${new Date().getFullYear()}-${String(currentIcv).padStart(5, '0')}`;
-    const uuid = crypto.randomUUID();
-
-    const currentPih = egs.pih;
-    const issueTimestamp = `${requestData.issueDate || new Date().toISOString().split('T')[0]}T${requestData.issueTime || new Date().toISOString().split('T')[1].slice(0, 8)}Z`;
-
-    // 4. Pre-Signature Canonical XML Payload & Digest Calculation (Rule BR-KSA-26)
-    const tempXmlForHash = buildZATCAUBLXml({
-      invoiceNumber,
-      uuid,
-      icv: currentIcv,
-      pih: currentPih,
-      digitalSignatureBase64: '',
-      qrCodeBase64TLV: '',
-      request: requestData,
-      taxpayer: egs.taxpayer,
-      subtotalSAR,
-      vatTotalSAR,
-      grandTotalSAR,
-      includeSignatureBlocks: false, // Exclude UBLExtensions, QR, and Signature elements per Rule BR-KSA-26
-    });
-
-    const invoiceHashBase64 = computeZatcaInvoiceHash(tempXmlForHash);
-
-    // 5. Digital signature
-    const digitalSignatureBase64 = signInvoiceHash(
-      invoiceHashBase64,
-      egs.certificate.privateKeyPem
-    );
-
-    // 6. Generate ZATCA Phase 2 9-Tag TLV Base64 & QR Code Image using server/qr.ts utility
-    const { base64TLV, dataUrl: qrCodeDataUrl } = await generateAndRenderZATCAQR({
-      sellerName: egs.taxpayer.taxpayerName,
-      vatNumber: egs.taxpayer.vatNumber,
-      timestamp: issueTimestamp,
-      totalAmount: grandTotalSAR.toFixed(2),
-      vatAmount: vatTotalSAR.toFixed(2),
-      xmlHash: invoiceHashBase64,
-      ecdsaSignature: digitalSignatureBase64,
-      publicKey: egs.certificate.publicKeyPem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\n/g, ''),
-      certificateStamp: egs.certificate.complianceCSID,
-    });
-
-    const tlvResult = generateZATCATLVBase64({
-      sellerName: egs.taxpayer.taxpayerName,
-      vatNumber: egs.taxpayer.vatNumber,
-      timestamp: issueTimestamp,
-      totalWithVat: grandTotalSAR.toFixed(2),
-      vatTotal: vatTotalSAR.toFixed(2),
-      invoiceHashBase64,
-      digitalSignatureBase64,
-      publicKeyPemOrBase64: egs.certificate.publicKeyPem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\n/g, ''),
-      csidCertificateBase64: egs.certificate.complianceCSID,
-    });
-
-    // 8. Final canonical UBL 2.1 XML
-    const finalUblXml = buildZATCAUBLXml({
-      invoiceNumber,
-      uuid,
-      icv: currentIcv,
-      pih: currentPih,
-      qrCodeBase64TLV: tlvResult.base64TLV,
-      digitalSignatureBase64,
-      invoiceHashBase64,
-      csidCertificateBase64: egs.certificate.complianceCSID,
-      request: requestData,
-      taxpayer: egs.taxpayer,
-      subtotalSAR,
-      vatTotalSAR,
-      grandTotalSAR,
-      includeSignatureBlocks: true,
-    });
-
-    // 9. Update state ICV and PIH chain
-    updateStateAfterInvoice(invoiceHashBase64);
-
-    // Compliance status label (B2B = CLEARED by ZATCA API, B2C = REPORTED)
-    const complianceStatus = requestData.invoiceType === '0100000' ? 'CLEARED' : 'REPORTED';
-
-    const generatedResponse: GeneratedInvoiceResponse = {
-      id: uuid,
-      uuid,
-      invoiceType: requestData.invoiceType,
-      invoiceTypeLabel: requestData.invoiceType === '0100000' ? 'Standard Tax Invoice (B2B - فاتورة ضريبية)' : 'Simplified Tax Invoice (B2C - فاتورة ضريبية مبسطة)',
-      invoiceNumber,
-      icv: currentIcv,
-      pih: currentPih,
-      invoiceHash: invoiceHashBase64,
-      issueTimestamp,
-      taxpayer: egs.taxpayer,
-      customer: requestData.customer,
-      lineItems: items,
-      subtotalSAR,
-      vatTotalSAR,
-      grandTotalSAR,
-      qrCodeBase64TLV: tlvResult.base64TLV,
-      qrCodeDataUrl,
-      tlvTags: tlvResult.tags,
-      digitalSignatureBase64,
-      ublXml: finalUblXml,
-      complianceStatus,
-      complianceLogs: validationResult.logs,
-      createdAt: new Date().toISOString(),
-    };
-
-    saveInvoice(generatedResponse);
-
-    res.json({
-      success: true,
-      message: requestData.invoiceType === '0100000'
-        ? 'Invoice CLEARED by ZATCA Phase 2 Clearance API.'
-        : 'Simplified Invoice signed & REPORTED to ZATCA Fatoora Platform.',
-      invoice: generatedResponse,
-      updatedEgsState: getEGSState(),
-    });
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({
       success: false,
-      error: error?.message || 'Error generating ZATCA Invoice',
+      error: error.message || 'Invoice generation failed',
     });
   }
 });
@@ -508,6 +654,14 @@ router.post('/zatca/onboard/run-compliance', async (req: Request, res: Response)
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
+});
+
+// Route E: Get Background Reporting Queue Status
+router.get('/zatca/queue', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    queue: reportingQueue.getQueueStatus(),
+  });
 });
 
 export default router;

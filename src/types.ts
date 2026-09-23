@@ -1,3 +1,23 @@
+export interface CompanyTenant {
+  id: string;
+  name: string;
+  type: 'restaurant' | 'company';
+  vatNumber: string;
+  crNumber: string;
+  branchName: string;
+  city: string;
+  district: string;
+  streetName: string;
+  buildingNumber: string;
+  postalCode: string;
+  egsUuid: string;
+  environment: 'simulation' | 'production';
+  csidStatus: 'NOT_ONBOARDED' | 'COMPLIANCE_ACTIVE' | 'PRODUCTION_ACTIVE';
+  icv: number;
+  pih: string;
+  createdAt: string;
+}
+
 export interface TaxpayerDetails {
   taxpayerName: string;
   vatNumber: string;

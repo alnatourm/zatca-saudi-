@@ -14,7 +14,9 @@ export interface CSRRequestParams {
 }
 
 export function generateZatcaKeyPairAndCSR(params: CSRRequestParams) {
+  const env = (process.env.ZATCA_ENV as 'simulation' | 'production') || 'simulation';
   return generateEgsCsr({
+    environment: env,
     vatNumber: params.vatNumber,
     companyName: params.organizationName,
     branchName: params.organizationUnitName,
@@ -88,6 +90,7 @@ businessCategory = ${params.businessCategory}
     // 1. Generate real ECDSA key using curve secp256k1 (Required by ZATCA)
     if (!fs.existsSync(keyPath)) {
       execSync(`openssl ecparam -name secp256k1 -genkey -noout -out "${keyPath}"`);
+      try { fs.chmodSync(keyPath, 0o600); } catch (_) {}
     }
 
     // 2. Generate valid PKCS#10 CSR with ASN.1 Subject Alternative Names

@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { EGSState, InvoiceRequest, LineItem, GeneratedInvoiceResponse } from '../types';
+import { EGSState, InvoiceRequest, LineItem, GeneratedInvoiceResponse, CompanyTenant } from '../types';
 import { Language, translations } from '../i18n';
 import { ReceiptPreview } from './ReceiptPreview';
-import { FileCode2, Plus, Trash2, ShieldCheck, ShoppingCart, Send, User, Sparkles, Building2 } from 'lucide-react';
+import { FileCode2, Plus, Trash2, ShieldCheck, ShoppingCart, Send, User, Sparkles, Building2, FileSpreadsheet, Store } from 'lucide-react';
 
 interface POSSimulatorTabProps {
   egsState: EGSState | null;
-  onGenerateInvoice: (req: InvoiceRequest) => Promise<GeneratedInvoiceResponse>;
+  activeTenant?: CompanyTenant | null;
+  onGenerateInvoice: (req: InvoiceRequest & { tenantId?: string }) => Promise<GeneratedInvoiceResponse>;
   onOpenQRDecoder: (base64TLV: string) => void;
   isLoading: boolean;
   lang: Language;
@@ -14,6 +15,7 @@ interface POSSimulatorTabProps {
 
 export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
   egsState,
+  activeTenant,
   onGenerateInvoice,
   onOpenQRDecoder,
   isLoading,
@@ -33,34 +35,37 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
   const [lineItems, setLineItems] = useState<LineItem[]>([
     {
       id: '1',
-      itemName: 'Espresso Single Origin / إسببريسو',
+      itemName: 'وجبة شاورما دجاج جامبو / Chicken Shawarma Combo',
       quantity: 2,
-      unitPrice: 18.0,
+      unitPrice: 22.0,
       vatCategory: 'S',
       vatRate: 15,
+      discount: 0,
     },
     {
       id: '2',
-      itemName: 'Fresh Croissant / كرواسون طازج',
+      itemName: 'بطاطس مقلية عائلي / Family French Fries',
       quantity: 1,
-      unitPrice: 14.0,
+      unitPrice: 12.0,
       vatCategory: 'S',
       vatRate: 15,
+      discount: 0,
     },
   ]);
 
   // Customer / Buyer details for B2B
-  const [buyerName, setBuyerName] = useState<string>('Al-Sharq Enterprises Co');
+  const [buyerName, setBuyerName] = useState<string>('شركة الشرق للحلول التقنية');
   const [buyerVatNumber, setBuyerVatNumber] = useState<string>('311122233300003');
-  const [buyerCity, setBuyerCity] = useState<string>('Jeddah');
+  const [buyerCity, setBuyerCity] = useState<string>('جدة');
   const [buyerPostalCode, setBuyerPostalCode] = useState<string>('21589');
 
   const [generatedInvoice, setGeneratedInvoice] = useState<GeneratedInvoiceResponse | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
 
   // Totals calculations
   const subtotalSAR = lineItems.reduce(
-    (acc, item) => acc + item.quantity * item.unitPrice,
+    (acc, item) => acc + item.quantity * item.unitPrice - (item.discount || 0),
     0
   );
   const vatTotalSAR = subtotalSAR * 0.15;
@@ -71,11 +76,12 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
       ...lineItems,
       {
         id: Date.now().toString(),
-        itemName: 'New POS Product / منتج جديد',
+        itemName: 'صنف جديد / New Item',
         quantity: 1,
         unitPrice: 25.0,
         vatCategory: 'S',
         vatRate: 15,
+        discount: 0,
       },
     ]);
   };
@@ -91,21 +97,59 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
     );
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const content = event.target?.result as string;
+      const isJson = file.name.endsWith('.json');
+
+      try {
+        const res = await fetch('/api/invoice/import-pos-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileContent: content,
+            fileType: isJson ? 'json' : 'csv',
+          }),
+        });
+        const data = await res.json();
+        if (data.success && data.lineItems?.length > 0) {
+          setLineItems(data.lineItems);
+          const msg = lang === 'ar'
+            ? `تم استيراد ${data.importedCount} صنف بنجاح من ملف الـ POS (${file.name})!`
+            : `Successfully imported ${data.importedCount} items from POS file (${file.name})!`;
+          setImportNotice(msg);
+          setTimeout(() => setImportNotice(null), 5000);
+        } else {
+          alert(data.error || 'فشل قراءة الملف');
+        }
+      } catch (err) {
+        alert('حدث خطأ أثناء تحميل الملف');
+      }
+    };
+
+    reader.readAsText(file);
+  };
+
   const handleLoadCoffeePreset = () => {
     setInvoiceType('0200000');
     setLineItems([
-      { id: '1', itemName: 'Espresso Single Origin', quantity: 2, unitPrice: 18.0, vatCategory: 'S', vatRate: 15 },
-      { id: '2', itemName: 'Fresh Bakery Croissant', quantity: 1, unitPrice: 14.0, vatCategory: 'S', vatRate: 15 },
+      { id: '1', itemName: 'وجبة شاورما دجاج جامبو', quantity: 2, unitPrice: 22.0, vatCategory: 'S', vatRate: 15, discount: 0 },
+      { id: '2', itemName: 'بطاطس مقلية عائلي', quantity: 1, unitPrice: 12.0, vatCategory: 'S', vatRate: 15, discount: 0 },
+      { id: '3', itemName: 'مشروب غازي بيبسي', quantity: 2, unitPrice: 5.0, vatCategory: 'S', vatRate: 15, discount: 0 },
     ]);
   };
 
   const handleLoadITPreset = () => {
     setInvoiceType('0100000');
-    setBuyerName('Al-Enterprise Solutions KSA');
+    setBuyerName('شركة التقنية العربية المتقدمة');
     setBuyerVatNumber('311122233300003');
     setLineItems([
-      { id: '1', itemName: 'Cloud Server Infrastructure Consultation', quantity: 10, unitPrice: 450.0, vatCategory: 'S', vatRate: 15 },
-      { id: '2', itemName: 'Security SSL Audit License', quantity: 1, unitPrice: 1200.0, vatCategory: 'S', vatRate: 15 },
+      { id: '1', itemName: 'استشارات بنية تحتية سحابية', quantity: 10, unitPrice: 450.0, vatCategory: 'S', vatRate: 15, discount: 0 },
+      { id: '2', itemName: 'ترخيص شهادات الأمان الرقمية', quantity: 1, unitPrice: 1200.0, vatCategory: 'S', vatRate: 15, discount: 0 },
     ]);
   };
 
@@ -129,7 +173,8 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
       }
     }
 
-    const req: InvoiceRequest = {
+    const req: InvoiceRequest & { tenantId?: string } = {
+      tenantId: activeTenant?.id,
       invoiceType,
       invoiceSubType: '388',
       issueDate,
@@ -140,10 +185,10 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
           ? {
               buyerName: buyerName.trim(),
               buyerVatNumber: buyerVatNumber.trim(),
-              buyerStreet: 'King Abdulaziz Road',
+              buyerStreet: 'طريق الملك عبد العزيز',
               buyerBuildingNumber: '1102',
-              buyerDistrict: 'Al-Shati',
-              buyerCity: buyerCity.trim() || 'Jeddah',
+              buyerDistrict: 'الشاطئ',
+              buyerCity: buyerCity.trim() || 'جدة',
               buyerPostalCode: buyerPostalCode.trim() || '21589',
               buyerCountry: 'SA',
             }
@@ -191,6 +236,45 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Active Tenant Indicator & POS File Upload Banner */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-slate-900/90 p-4 rounded-xl border border-slate-800 gap-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-emerald-950 border border-emerald-700/60 flex items-center justify-center text-emerald-400 shrink-0">
+            <Store className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              {lang === 'ar' ? 'المنشأة المصدرة للفاتورة:' : 'Issuing Organization:'}
+            </h4>
+            <p className="text-sm font-bold text-white mt-0.5 flex items-center gap-2">
+              <span>{activeTenant?.name || egsState?.taxpayer?.taxpayerName}</span>
+              <span className="text-xs text-emerald-400 font-mono bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800">
+                VAT: {activeTenant?.vatNumber || egsState?.taxpayer?.vatNumber}
+              </span>
+            </p>
+          </div>
+        </div>
+
+        {/* POS File Import Dropzone / Button */}
+        <label className="cursor-pointer flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-4 py-2.5 rounded-lg font-semibold transition shadow-md hover:shadow-indigo-900/40">
+          <FileSpreadsheet className="w-4 h-4" />
+          <span>{lang === 'ar' ? 'استيراد ملف POS / Excel (CSV)' : 'Import POS / Excel CSV'}</span>
+          <input
+            type="file"
+            accept=".csv,.txt,.json"
+            className="hidden"
+            onChange={handleFileUpload}
+          />
+        </label>
+      </div>
+
+      {importNotice && (
+        <div className="bg-emerald-950/90 border border-emerald-700 text-emerald-200 text-xs px-4 py-3 rounded-xl flex items-center justify-between">
+          <span>{importNotice}</span>
+          <button onClick={() => setImportNotice(null)} className="font-bold text-emerald-400">✕</button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
@@ -317,7 +401,7 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
               </div>
 
               <div className="space-y-3">
-                {lineItems.map((item, index) => (
+                {lineItems.map((item) => (
                   <div
                     key={item.id}
                     className="flex flex-col sm:flex-row items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-lg"

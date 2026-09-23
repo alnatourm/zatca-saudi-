@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { EGSState, TaxpayerDetails, InvoiceRequest, GeneratedInvoiceResponse, DecodedQRResponse } from './types';
+import { EGSState, TaxpayerDetails, InvoiceRequest, GeneratedInvoiceResponse, DecodedQRResponse, CompanyTenant } from './types';
 import { Language } from './i18n';
 import { Header } from './components/Header';
 import { EGSOnboardingTab } from './components/EGSOnboardingTab';
 import { POSSimulatorTab } from './components/POSSimulatorTab';
 import { StateInspectorTab } from './components/StateInspectorTab';
 import { QRDecoderModal } from './components/QRDecoderModal';
+import { AddTenantModal } from './components/AddTenantModal';
 import { ShieldCheck, AlertCircle } from 'lucide-react';
 
 export default function App() {
@@ -16,9 +17,30 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Multi-Tenant SaaS State
+  const [tenants, setTenants] = useState<CompanyTenant[]>([]);
+  const [activeTenantId, setActiveTenantId] = useState<string>('saudi-flame-grill');
+  const [isAddTenantModalOpen, setIsAddTenantModalOpen] = useState<boolean>(false);
+
   // QR Decoder Modal State
   const [isQRModalOpen, setIsQRModalOpen] = useState<boolean>(false);
   const [qrBase64ToDecode, setQrBase64ToDecode] = useState<string>('');
+
+  // Fetch tenants list
+  const fetchTenants = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tenants');
+      const data = await res.json();
+      if (data.success && data.tenants) {
+        setTenants(data.tenants);
+        if (data.activeTenantId) {
+          setActiveTenantId(data.activeTenantId);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch tenants list:', err);
+    }
+  }, []);
 
   // Fetch initial EGS state
   const fetchEGSStatus = useCallback(async () => {
@@ -27,6 +49,9 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         setEgsState(data.egs);
+        if (data.activeTenantId) {
+          setActiveTenantId(data.activeTenantId);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch EGS state:', err);
@@ -47,9 +72,68 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    fetchTenants();
     fetchEGSStatus();
     fetchInvoices();
-  }, [fetchEGSStatus, fetchInvoices]);
+  }, [fetchTenants, fetchEGSStatus, fetchInvoices]);
+
+  // Switch Active Tenant
+  const handleSelectTenant = async (tenantId: string) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/tenants/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActiveTenantId(data.activeTenantId);
+        setEgsState(data.egs);
+        fetchInvoices();
+      }
+    } catch (err) {
+      console.error('Failed to switch tenant:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Add New Tenant / Restaurant Handler
+  const handleAddTenant = async (tenantData: {
+    name: string;
+    type: 'restaurant' | 'company';
+    vatNumber: string;
+    crNumber: string;
+    branchName: string;
+    city: string;
+    district: string;
+    streetName: string;
+    buildingNumber: string;
+    postalCode: string;
+  }) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/tenants/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tenantData),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to register new tenant');
+      }
+      await fetchTenants();
+      if (data.activeTenantId) {
+        await handleSelectTenant(data.activeTenantId);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error creating tenant');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Onboard handler
   const handleOnboard = async (taxpayer: TaxpayerDetails) => {
@@ -66,6 +150,7 @@ export default function App() {
         throw new Error(data.error || 'Onboarding failed');
       }
       setEgsState(data.egs);
+      fetchTenants();
     } catch (err: any) {
       setErrorMsg(err.message || 'Error during onboarding');
       throw err;
@@ -92,6 +177,7 @@ export default function App() {
 
       setEgsState(data.updatedEgsState);
       fetchInvoices();
+      fetchTenants();
       return data.invoice;
     } catch (err: any) {
       setErrorMsg(err.message || 'Error generating invoice');
@@ -113,6 +199,7 @@ export default function App() {
       if (data.success) {
         setEgsState(data.egs);
         fetchInvoices();
+        fetchTenants();
       }
     } catch (err) {
       console.error('Reset failed:', err);
@@ -145,7 +232,7 @@ export default function App() {
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
       className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased"
     >
-      {/* Header with Navigation & Language Switcher */}
+      {/* Header with Multi-Tenant Navigation & Language Switcher */}
       <Header
         egsState={egsState}
         activeTab={activeTab}
@@ -153,6 +240,10 @@ export default function App() {
         onOpenQRDecoder={() => handleOpenQRModal('')}
         lang={lang}
         setLang={setLang}
+        tenants={tenants}
+        activeTenantId={activeTenantId}
+        onSelectTenant={handleSelectTenant}
+        onOpenAddTenantModal={() => setIsAddTenantModalOpen(true)}
       />
 
       {/* Global Error Banner */}
@@ -187,6 +278,7 @@ export default function App() {
         {activeTab === 'pos' && (
           <POSSimulatorTab
             egsState={egsState}
+            activeTenant={tenants.find((t) => t.id === activeTenantId) || null}
             onGenerateInvoice={handleGenerateInvoice}
             onOpenQRDecoder={handleOpenQRModal}
             isLoading={isLoading}
@@ -213,8 +305,8 @@ export default function App() {
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
             <span className="font-semibold text-slate-300">
               {lang === 'ar'
-                ? 'بوابة الفوترة الإلكترونية السعودية (فاتورة) - المرحلة الثانية'
-                : 'ZATCA Phase 2 E-Invoicing Gateway (Fatoora)'}
+                ? 'بوابة الفوترة الإلكترونية السعودية (فاتورة) - المرحلة الثانية (نظام متعدد المنشآت)'
+                : 'ZATCA Phase 2 E-Invoicing Gateway (Fatoora) - Multi-Tenant SaaS'}
             </span>
             <span className="text-slate-600">|</span>
             <span>{lang === 'ar' ? 'هيئة الزكاة والضريبة والجمارك' : 'Saudi Arabia Tax Authority Standard'}</span>
@@ -228,6 +320,14 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Add New Tenant Modal */}
+      <AddTenantModal
+        isOpen={isAddTenantModalOpen}
+        onClose={() => setIsAddTenantModalOpen(false)}
+        onAddTenant={handleAddTenant}
+        lang={lang}
+      />
 
       {/* QR Decoder Inspector Modal */}
       <QRDecoderModal
