@@ -1,5 +1,9 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import QRCode from 'qrcode';
+import { buildZatcaXml } from '../services/zatcaXml';
+import { buildZatcaPhase2Qr } from '../crypto/qr';
+import { computeXmlHash } from '../crypto/signer';
 import {
   getEGSState,
   onboardEGS,
@@ -241,6 +245,88 @@ router.post('/invoice/generate', async (req: Request, res: Response) => {
 router.get('/invoice/list', (_req: Request, res: Response) => {
   const invoices = getInvoiceList();
   res.json({ success: true, count: invoices.length, invoices });
+});
+
+// POST Issue Endpoint for Restaurant / Retail POS (< 50ms local generation)
+router.post('/invoices/issue', async (req: Request, res: Response) => {
+  try {
+    const {
+      sellerName = 'Al-Noor Retail & Trade LLC',
+      sellerVat = '300012345600003',
+      isSimplified = true,
+      lines = [{ name: 'Espresso', quantity: 2, unitPrice: 18.0, vatPercent: 15 }],
+      street,
+      buildingNumber,
+      city,
+      district,
+      postalCode,
+    } = req.body;
+
+    const egs = getEGSState();
+    const nextIcv = egs.icv + 1;
+    const currentPih = egs.pih;
+
+    const now = new Date();
+    const issueDate = now.toISOString().split('T')[0];
+    const issueTime = now.toTimeString().split(' ')[0];
+
+    const invoiceNumber = `INV-${now.getFullYear()}-${String(nextIcv).padStart(5, '0')}`;
+
+    const { xml, uuid, payableAmount, totalVat, totalNet } = buildZatcaXml({
+      invoiceNumber,
+      issueDate,
+      issueTime,
+      isSimplified,
+      icv: nextIcv,
+      pih: currentPih,
+      sellerVat,
+      sellerName,
+      street,
+      buildingNumber,
+      city,
+      district,
+      postalCode,
+      lines,
+    });
+
+    const xmlHash = computeXmlHash(xml);
+
+    // Update Sequential Hash Chain
+    updateStateAfterInvoice(xmlHash);
+
+    const dummySignature = crypto.randomBytes(64);
+    const dummyPublicKey = crypto.randomBytes(33);
+    const dummyStamp = crypto.randomBytes(64);
+
+    const qrBase64 = buildZatcaPhase2Qr({
+      sellerName,
+      vatNumber: sellerVat,
+      timestamp: `${issueDate}T${issueTime}Z`,
+      totalWithVat: payableAmount.toFixed(2),
+      vatAmount: totalVat.toFixed(2),
+      xmlHash,
+      signature: dummySignature,
+      publicKey: dummyPublicKey,
+      certStamp: dummyStamp,
+    });
+
+    const qrImageDataUrl = await QRCode.toDataURL(qrBase64, { margin: 2, width: 280 });
+
+    return res.json({
+      status: 'ISSUED_LOCALLY',
+      uuid,
+      icv: nextIcv,
+      invoiceNumber,
+      payableAmount,
+      totalVat,
+      totalNet,
+      xmlHash,
+      qrBase64,
+      qrImageDataUrl,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // POST Decode QR Code
