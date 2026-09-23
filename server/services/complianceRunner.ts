@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { ZatcaOnboardingService } from './zatcaOnboarding';
 import { buildZatcaXml } from './zatcaXml';
+import { computeZatcaInvoiceHash, signInvoiceHash } from '../zatca/crypto';
 
 export class ZatcaComplianceRunner {
   private onboardingService: ZatcaOnboardingService;
@@ -14,7 +15,11 @@ export class ZatcaComplianceRunner {
   }
 
   /**
-   * Runs the required compliance sample submissions to qualify the EGS unit
+   * Runs the required 4-document compliance test battery to qualify the EGS unit:
+   * 1. Simplified Tax Invoice (0200000, 388)
+   * 2. Simplified Credit Note (0200000, 381)
+   * 3. Standard Tax Invoice (0100000, 388)
+   * 4. Standard Debit Note (0100000, 383)
    */
   async runAllComplianceChecks(sellerVat: string, sellerName: string) {
     const credsPath = path.join(this.storageDir, 'zatca_credentials.json');
@@ -29,67 +34,105 @@ export class ZatcaComplianceRunner {
     const issueDate = now.toISOString().split('T')[0];
     const issueTime = now.toTimeString().split(' ')[0];
 
-    // 1. Submit Sample Simplified Invoice (0200000)
-    const simplified = buildZatcaXml({
-      invoiceNumber: `TEST-SIMP-${Date.now().toString().slice(-5)}`,
-      issueDate,
-      issueTime,
-      isSimplified: true,
-      icv: 1,
-      pih: "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==",
-      sellerVat,
-      sellerName,
-      city: 'Riyadh',
-      street: 'King Fahd Rd',
-      buildingNumber: '1234',
-      postalCode: '12211',
-      district: 'Olaya',
-      lines: [{ name: 'Sample Item A', quantity: 1, unitPrice: 100, vatPercent: 15 }]
-    });
+    let currentPih = "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==";
 
-    const simpHash = crypto.createHash('sha256').update(simplified.xml).digest('base64');
-    const simpXmlBase64 = Buffer.from(simplified.xml, 'utf8').toString('base64');
+    const testRuns = [
+      {
+        testName: 'Simplified Tax Invoice',
+        code: '388',
+        subType: '0200000',
+        isSimplified: true,
+        invNum: `TEST-SIMP-${Date.now().toString().slice(-5)}`,
+        isNote: false,
+      },
+      {
+        testName: 'Simplified Credit Note',
+        code: '381',
+        subType: '0200000',
+        isSimplified: true,
+        invNum: `TEST-CN-${Date.now().toString().slice(-5)}`,
+        isNote: true,
+        refNumber: `TEST-SIMP-${Date.now().toString().slice(-5)}`,
+      },
+      {
+        testName: 'Standard Tax Invoice',
+        code: '388',
+        subType: '0100000',
+        isSimplified: false,
+        invNum: `TEST-STD-${Date.now().toString().slice(-5)}`,
+        isNote: false,
+      },
+      {
+        testName: 'Standard Debit Note',
+        code: '383',
+        subType: '0100000',
+        isSimplified: false,
+        invNum: `TEST-DN-${Date.now().toString().slice(-5)}`,
+        isNote: true,
+        refNumber: `TEST-STD-${Date.now().toString().slice(-5)}`,
+      },
+    ];
 
-    console.log('Sending sample Simplified Tax Invoice to compliance...');
-    const simpRes = await this.onboardingService.submitComplianceInvoice({
-      signedXmlBase64: simpXmlBase64,
-      invoiceHash: simpHash,
-      invoiceUuid: simplified.uuid,
-      ccsidToken: creds.binarySecurityToken,
-      secret: creds.secret
-    });
-    results.push({ type: 'SIMPLIFIED_INVOICE', status: simpRes.validationResults?.status || 'PASS', details: simpRes });
+    let icv = 1;
+    for (const test of testRuns) {
+      console.log(`Generating & submitting ${test.testName}...`);
 
-    // 2. Submit Sample Standard Invoice (0100000)
-    const standard = buildZatcaXml({
-      invoiceNumber: `TEST-STD-${Date.now().toString().slice(-5)}`,
-      issueDate,
-      issueTime,
-      isSimplified: false,
-      icv: 2,
-      pih: simpHash,
-      sellerVat,
-      sellerName,
-      city: 'Riyadh',
-      street: 'King Fahd Rd',
-      buildingNumber: '1234',
-      postalCode: '12211',
-      district: 'Olaya',
-      lines: [{ name: 'Corporate Consulting', quantity: 1, unitPrice: 2000, vatPercent: 15 }]
-    });
+      const doc = buildZatcaXml({
+        invoiceNumber: test.invNum,
+        issueDate,
+        issueTime,
+        isSimplified: test.isSimplified,
+        invoiceTypeCode: test.code,
+        billingReferenceId: test.refNumber,
+        icv,
+        pih: currentPih,
+        sellerVat,
+        sellerName,
+        city: 'Riyadh',
+        street: 'King Fahd Rd',
+        buildingNumber: '1234',
+        postalCode: '12211',
+        district: 'Olaya',
+        lines: [{ name: `Sample Item - ${test.testName}`, quantity: 1, unitPrice: 200, vatPercent: 15 }]
+      });
 
-    const stdHash = crypto.createHash('sha256').update(standard.xml).digest('base64');
-    const stdXmlBase64 = Buffer.from(standard.xml, 'utf8').toString('base64');
+      const docHash = computeZatcaInvoiceHash(doc.xml);
+      let docSignature = '';
+      if (creds.privateKeyPem) {
+        try {
+          docSignature = signInvoiceHash(docHash, creds.privateKeyPem);
+        } catch (_e) {
+          docSignature = '';
+        }
+      }
 
-    console.log('Sending sample Standard Tax Invoice to compliance...');
-    const stdRes = await this.onboardingService.submitComplianceInvoice({
-      signedXmlBase64: stdXmlBase64,
-      invoiceHash: stdHash,
-      invoiceUuid: standard.uuid,
-      ccsidToken: creds.binarySecurityToken,
-      secret: creds.secret
-    });
-    results.push({ type: 'STANDARD_INVOICE', status: stdRes.validationResults?.status || 'PASS', details: stdRes });
+      const signedXmlBase64 = Buffer.from(doc.xml, 'utf8').toString('base64');
+
+      try {
+        const res = await this.onboardingService.submitComplianceInvoice({
+          signedXmlBase64,
+          invoiceHash: docHash,
+          invoiceUuid: doc.uuid,
+          ccsidToken: creds.binarySecurityToken,
+          secret: creds.secret,
+        });
+
+        results.push({
+          test: test.testName,
+          status: res.validationResults?.status || 'PASS',
+          details: res,
+        });
+      } catch (err: any) {
+        results.push({
+          test: test.testName,
+          status: 'ERROR',
+          error: err.message,
+        });
+      }
+
+      currentPih = docHash;
+      icv++;
+    }
 
     return results;
   }

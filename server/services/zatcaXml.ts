@@ -12,6 +12,8 @@ export interface ZatcaXmlParams {
   issueDate: string;  // YYYY-MM-DD
   issueTime: string;  // HH:mm:ss
   isSimplified: boolean;
+  invoiceTypeCode?: string; // '388' (Invoice), '381' (Credit Note), '383' (Debit Note)
+  billingReferenceId?: string; // Original invoice ID if credit/debit note
   icv: number;        // Monotonic counter (1, 2, 3...)
   pih: string;        // Previous Invoice Hash (Base64)
   sellerVat: string;  // 15-digit number
@@ -27,6 +29,7 @@ export interface ZatcaXmlParams {
 export function buildZatcaXml(params: ZatcaXmlParams) {
   const uuid = uuidv4();
   const subType = params.isSimplified ? '0200000' : '0100000';
+  const docTypeCode = params.invoiceTypeCode || '388';
 
   let totalNet = 0;
   let totalVat = 0;
@@ -64,6 +67,10 @@ export function buildZatcaXml(params: ZatcaXmlParams) {
   totalVat = Number(totalVat.toFixed(2));
   const payableAmount = Number((totalNet + totalVat).toFixed(2));
 
+  const billingRefXml = params.billingReferenceId
+    ? `<cac:BillingReference><cac:InvoiceDocumentReference><cbc:ID>${params.billingReferenceId}</cbc:ID></cac:InvoiceDocumentReference></cac:BillingReference>`
+    : '';
+
   const xml = `<?xml version="1.0" encoding="UTF-8"?>` +
 `<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" ` +
 `xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" ` +
@@ -74,9 +81,10 @@ export function buildZatcaXml(params: ZatcaXmlParams) {
 `<cbc:UUID>${uuid}</cbc:UUID>` +
 `<cbc:IssueDate>${params.issueDate}</cbc:IssueDate>` +
 `<cbc:IssueTime>${params.issueTime}</cbc:IssueTime>` +
-`<cbc:InvoiceTypeCode name="${subType}">388</cbc:InvoiceTypeCode>` +
+`<cbc:InvoiceTypeCode name="${subType}">${docTypeCode}</cbc:InvoiceTypeCode>` +
 `<cbc:DocumentCurrencyCode>SAR</cbc:DocumentCurrencyCode>` +
 `<cbc:TaxCurrencyCode>SAR</cbc:TaxCurrencyCode>` +
+billingRefXml +
 `<cac:AdditionalDocumentReference>` +
   `<cbc:ID>ICV</cbc:ID>` +
   `<cbc:UUID>${params.icv}</cbc:UUID>` +
@@ -126,7 +134,7 @@ export function buildZatcaXml(params: ZatcaXmlParams) {
 `<cac:LegalMonetaryTotal>` +
   `<cbc:LineExtensionAmount currencyID="SAR">${totalNet.toFixed(2)}</cbc:LineExtensionAmount>` +
   `<cbc:TaxExclusiveAmount currencyID="SAR">${totalNet.toFixed(2)}</cbc:TaxExclusiveAmount>` +
-  `<cbc:TaxInclusiveAmount currencyID="SAR">${payableAmount.toFixed(2)}</cbc:TaxInclusiveAmount>` +
+  `<cbc:TaxInclusiveAmount currencyID="SAR">${payableAmount.toFixed(2)}</cbc:PayableAmount>` +
   `<cbc:AllowanceTotalAmount currencyID="SAR">0.00</cbc:AllowanceTotalAmount>` +
   `<cbc:PayableAmount currencyID="SAR">${payableAmount.toFixed(2)}</cbc:PayableAmount>` +
 `</cac:LegalMonetaryTotal>` +

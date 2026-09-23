@@ -5,8 +5,10 @@ export interface ZATCAXMLInput {
   uuid: string;
   icv: number;
   pih: string;
-  digitalSignatureBase64: string;
-  qrCodeBase64TLV: string;
+  digitalSignatureBase64?: string;
+  qrCodeBase64TLV?: string;
+  invoiceHashBase64?: string;
+  csidCertificateBase64?: string;
   request: InvoiceRequest;
   taxpayer: TaxpayerDetails;
   subtotalSAR: number;
@@ -37,7 +39,10 @@ export function generateZATCAUBL21Xml(input: ZATCAXMLInput): string {
     uuid,
     icv,
     pih,
-    qrCodeBase64TLV,
+    digitalSignatureBase64 = '',
+    qrCodeBase64TLV = '',
+    invoiceHashBase64 = '',
+    csidCertificateBase64 = '',
     request,
     taxpayer,
     subtotalSAR,
@@ -99,6 +104,28 @@ export function generateZATCAUBL21Xml(input: ZATCAXMLInput): string {
               `<sac:SignatureInformation>` +
                 `<cbc:ID>urn:oasis:names:specification:ubl:signature:1</cbc:ID>` +
                 `<sbc:ReferencedSignatureID>urn:oasis:names:specification:ubl:signature:Invoice</sbc:ReferencedSignatureID>` +
+                `<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="signature">` +
+                  `<ds:SignedInfo>` +
+                    `<ds:CanonicalizationMethod Algorithm="http://www.w3.org/2006/12/xml-c14n11"/>` +
+                    `<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"/>` +
+                    `<ds:Reference Id="invoiceSignedData" URI="">` +
+                      `<ds:Transforms>` +
+                        `<ds:Transform Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116"><ds:XPath>not(//ancestor-or-self::ext:UBLExtensions)</ds:XPath></ds:Transform>` +
+                        `<ds:Transform Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116"><ds:XPath>not(//ancestor-or-self::cac:Signature)</ds:XPath></ds:Transform>` +
+                        `<ds:Transform Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116"><ds:XPath>not(//ancestor-or-self::cac:AdditionalDocumentReference[cbc:ID='QR'])</ds:XPath></ds:Transform>` +
+                        `<ds:Transform Algorithm="http://www.w3.org/2006/12/xml-c14n11"/>` +
+                      `</ds:Transforms>` +
+                      `<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>` +
+                      `<ds:DigestValue>${invoiceHashBase64}</ds:DigestValue>` +
+                    `</ds:Reference>` +
+                  `</ds:SignedInfo>` +
+                  `<ds:SignatureValue>${digitalSignatureBase64}</ds:SignatureValue>` +
+                  `<ds:KeyInfo>` +
+                    `<ds:X509Data>` +
+                      `<ds:X509Certificate>${csidCertificateBase64}</ds:X509Certificate>` +
+                    `</ds:X509Data>` +
+                  `</ds:KeyInfo>` +
+                `</ds:Signature>` +
               `</sac:SignatureInformation>` +
             `</sig:UBLDocumentSignatures>` +
           `</ext:ExtensionContent>` +

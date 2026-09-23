@@ -194,11 +194,11 @@ export function getInitialPIH(): string {
 }
 
 /**
- * Generates keypair for EGS CSID simulation.
+ * Generates keypair for EGS CSID simulation using curve secp256k1 as required by ZATCA.
  */
 export function generateEGSKeys() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
-    namedCurve: 'prime256v1', // standard secp256r1 / ecdsa-sha256
+    namedCurve: 'secp256k1',
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
@@ -207,16 +207,18 @@ export function generateEGSKeys() {
 }
 
 /**
- * Signs an invoice hash using ECDSA private key.
+ * Signs the SHA-256 invoice digest using the taxpayer's secp256k1 ECDSA private key.
+ * Generates an ASN.1 DER signature and encodes it in Base64 for XAdES insertion.
  */
 export function signInvoiceHash(hashBase64: string, privateKeyPem: string): string {
-  try {
-    const sign = crypto.createSign('SHA256');
-    sign.update(hashBase64);
-    sign.end();
-    return sign.sign(privateKeyPem, 'base64');
-  } catch {
-    // Fallback deterministic signature if key format differs
-    return crypto.createHmac('sha256', privateKeyPem || 'zatca_secret').update(hashBase64).digest('base64');
+  if (!privateKeyPem || !privateKeyPem.includes('PRIVATE KEY')) {
+    throw new Error('Valid ECDSA private key is required for signing.');
   }
+
+  const sign = crypto.createSign('SHA256');
+  sign.update(Buffer.from(hashBase64, 'utf8'));
+  sign.end();
+
+  // DER formatted ECDSA signature encoded in Base64
+  return sign.sign(privateKeyPem, 'base64');
 }
