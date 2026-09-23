@@ -12,10 +12,11 @@ export interface ZATCAXMLInput {
   subtotalSAR: number;
   vatTotalSAR: number;
   grandTotalSAR: number;
+  includeSignatureBlocks?: boolean; // Set false when generating XML for hashing
 }
 
 export function escapeXml(unsafe: string): string {
-  return unsafe
+  return String(unsafe ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -23,22 +24,13 @@ export function escapeXml(unsafe: string): string {
     .replace(/'/g, '&apos;');
 }
 
-/**
- * Minifies XML by stripping newlines, carriage returns, and extraneous whitespace between tags.
- * Ensures a single, continuous minified string without altering content inside tag values.
- */
 export function minifyXml(xmlString: string): string {
   return xmlString
-    .replace(/>\s+</g, '><') // Remove whitespace between tags
-    .replace(/\r?\n|\r/g, '') // Remove newlines
+    .replace(/>\s+</g, '><')
+    .replace(/\r?\n|\r/g, '')
     .trim();
 }
 
-/**
- * ZATCA UBL 2.1 Generator Function in server/xmlBuilder.ts
- * Produces a single, continuous, minified UBL 2.1 XML string compliant with ZATCA XSD rules (BR-KSA-28..30).
- * Includes standard XMLDSig/XAdES signature component structures and QR code embedded document object.
- */
 export function generateZATCAUBL21Xml(input: ZATCAXMLInput): string {
   const {
     invoiceNumber,
@@ -51,9 +43,10 @@ export function generateZATCAUBL21Xml(input: ZATCAXMLInput): string {
     subtotalSAR,
     vatTotalSAR,
     grandTotalSAR,
+    includeSignatureBlocks = true
   } = input;
 
-  const typeCodeName = request.invoiceType || '0200000'; // 0200000 (Simplified B2C) or 0100000 (Standard B2B)
+  const typeCodeName = request.invoiceType || '0200000'; // 0200000 = Simplified, 0100000 = Standard
 
   const lineItemsXml = (request.lineItems || [])
     .map((item, index) => {
@@ -85,31 +78,56 @@ export function generateZATCAUBL21Xml(input: ZATCAXMLInput): string {
     .join('');
 
   const customerXml = request.customer
-    ? `<cac:AccountingCustomerParty><cac:Party><cac:PartyIdentification><cbc:ID schemeID="NAT">${
-        request.customer.buyerVatNumber
-      }</cbc:ID></cac:PartyIdentification><cac:PartyLegalEntity><cbc:RegistrationName>${escapeXml(
-        request.customer.buyerName
-      )}</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party></cac:AccountingCustomerParty>`
-    : `<cac:AccountingCustomerParty><cac:Party><cac:PartyLegalEntity><cbc:RegistrationName>عميل نقدي</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party></cac:AccountingCustomerParty>`;
+    ? `<cac:AccountingCustomerParty>` +
+        `<cac:Party>` +
+          `<cac:PartyIdentification><cbc:ID schemeID="NAT">${request.customer.buyerVatNumber}</cbc:ID></cac:PartyIdentification>` +
+          `<cac:PartyLegalEntity><cbc:RegistrationName>${escapeXml(request.customer.buyerName)}</cbc:RegistrationName></cac:PartyLegalEntity>` +
+        `</cac:Party>` +
+      `</cac:AccountingCustomerParty>`
+    : `<cac:AccountingCustomerParty>` +
+        `<cac:Party>` +
+          `<cac:PartyLegalEntity><cbc:RegistrationName>عميل نقدي</cbc:RegistrationName></cac:PartyLegalEntity>` +
+        `</cac:Party>` +
+      `</cac:AccountingCustomerParty>`;
+
+  const ublExtensionsXml = includeSignatureBlocks
+    ? `<ext:UBLExtensions>` +
+        `<ext:UBLExtension>` +
+          `<ext:ExtensionURI>urn:oasis:names:specification:ubl:dsig:enveloped:xades</ext:ExtensionURI>` +
+          `<ext:ExtensionContent>` +
+            `<sig:UBLDocumentSignatures xmlns:sig="urn:oasis:names:specification:ubl:schema:xsd:CommonSignatureComponents-2" xmlns:sac="urn:oasis:names:specification:ubl:schema:xsd:SignatureAggregateComponents-2" xmlns:sbc="urn:oasis:names:specification:ubl:schema:xsd:SignatureBasicComponents-2">` +
+              `<sac:SignatureInformation>` +
+                `<cbc:ID>urn:oasis:names:specification:ubl:signature:1</cbc:ID>` +
+                `<sbc:ReferencedSignatureID>urn:oasis:names:specification:ubl:signature:Invoice</sbc:ReferencedSignatureID>` +
+              `</sac:SignatureInformation>` +
+            `</sig:UBLDocumentSignatures>` +
+          `</ext:ExtensionContent>` +
+        `</ext:UBLExtension>` +
+      `</ext:UBLExtensions>`
+    : '';
+
+  const qrDocRefXml = includeSignatureBlocks && qrCodeBase64TLV
+    ? `<cac:AdditionalDocumentReference>` +
+        `<cbc:ID>QR</cbc:ID>` +
+        `<cac:Attachment>` +
+          `<cbc:EmbeddedDocumentBinaryObject mimeCode="text/plain">${qrCodeBase64TLV}</cbc:EmbeddedDocumentBinaryObject>` +
+        `</cac:Attachment>` +
+      `</cac:AdditionalDocumentReference>`
+    : '';
+
+  const signatureXml = includeSignatureBlocks
+    ? `<cac:Signature>` +
+        `<cbc:ID>urn:oasis:names:specification:ubl:signature:Invoice</cbc:ID>` +
+        `<cbc:SignatureMethod>urn:oasis:names:specification:ubl:dsig:enveloped:xades</cbc:SignatureMethod>` +
+      `</cac:Signature>`
+    : '';
 
   const rawXml = `<?xml version="1.0" encoding="UTF-8"?>` +
 `<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" ` +
 `xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" ` +
 `xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" ` +
 `xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2">` +
-`<ext:UBLExtensions>` +
-  `<ext:UBLExtension>` +
-    `<ext:ExtensionURI>urn:oasis:names:specification:ubl:dsig:enveloped:xades</ext:ExtensionURI>` +
-    `<ext:ExtensionContent>` +
-      `<sig:UBLDocumentSignatures xmlns:sig="urn:oasis:names:specification:ubl:schema:xsd:CommonSignatureComponents-2" xmlns:sac="urn:oasis:names:specification:ubl:schema:xsd:SignatureAggregateComponents-2" xmlns:sbc="urn:oasis:names:specification:ubl:schema:xsd:SignatureBasicComponents-2">` +
-        `<sac:SignatureInformation>` +
-          `<cbc:ID>urn:oasis:names:specification:ubl:signature:1</cbc:ID>` +
-          `<sbc:ReferencedSignatureID>urn:oasis:names:specification:ubl:signature:Invoice</sbc:ReferencedSignatureID>` +
-        `</sac:SignatureInformation>` +
-      `</sig:UBLDocumentSignatures>` +
-    `</ext:ExtensionContent>` +
-  `</ext:UBLExtension>` +
-`</ext:UBLExtensions>` +
+ublExtensionsXml +
 `<cbc:ProfileID>reporting:1.0</cbc:ProfileID>` +
 `<cbc:ID>${invoiceNumber}</cbc:ID>` +
 `<cbc:UUID>${uuid}</cbc:UUID>` +
@@ -128,16 +146,8 @@ export function generateZATCAUBL21Xml(input: ZATCAXMLInput): string {
     `<cbc:EmbeddedDocumentBinaryObject mimeCode="text/plain">${pih}</cbc:EmbeddedDocumentBinaryObject>` +
   `</cac:Attachment>` +
 `</cac:AdditionalDocumentReference>` +
-`<cac:AdditionalDocumentReference>` +
-  `<cbc:ID>QR</cbc:ID>` +
-  `<cac:Attachment>` +
-    `<cbc:EmbeddedDocumentBinaryObject mimeCode="text/plain">${qrCodeBase64TLV}</cbc:EmbeddedDocumentBinaryObject>` +
-  `</cac:Attachment>` +
-`</cac:AdditionalDocumentReference>` +
-`<cac:Signature>` +
-  `<cbc:ID>urn:oasis:names:specification:ubl:signature:Invoice</cbc:ID>` +
-  `<cbc:SignatureMethod>urn:oasis:names:specification:ubl:dsig:enveloped:xades</cbc:SignatureMethod>` +
-`</cac:Signature>` +
+qrDocRefXml +
+signatureXml +
 `<cac:AccountingSupplierParty>` +
   `<cac:Party>` +
     `<cac:PartyIdentification><cbc:ID schemeID="CRN">${taxpayer.crNumber || '1010123456'}</cbc:ID></cac:PartyIdentification>` +
@@ -181,3 +191,6 @@ lineItemsXml +
 
   return minifyXml(rawXml);
 }
+
+// Export alias for backward compatibility
+export const buildZATCAUBLXml = generateZATCAUBL21Xml;

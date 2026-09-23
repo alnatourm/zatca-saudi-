@@ -1,4 +1,4 @@
-import { generateZATCAUBL21Xml } from '../xmlBuilder';
+import { generateZATCAUBL21Xml, ZATCAXMLInput } from '../xmlBuilder';
 import { InvoiceRequest, TaxpayerDetails } from './types';
 
 export function buildZATCAUBLXml(params: {
@@ -6,7 +6,7 @@ export function buildZATCAUBLXml(params: {
   uuid: string;
   icv: number;
   pih: string;
-  invoiceHashBase64: string;
+  invoiceHashBase64?: string;
   qrCodeBase64TLV: string;
   digitalSignatureBase64: string;
   request: InvoiceRequest;
@@ -14,6 +14,7 @@ export function buildZATCAUBLXml(params: {
   subtotalSAR: number;
   vatTotalSAR: number;
   grandTotalSAR: number;
+  includeSignatureBlocks?: boolean;
 }): string {
-  return generateZATCAUBL21Xml(params);
+  return generateZATCAUBL21Xml(params as ZATCAXMLInput);
 }

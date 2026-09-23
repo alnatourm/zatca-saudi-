@@ -128,28 +128,28 @@ router.post('/invoice/generate', async (req: Request, res: Response) => {
 
     const grandTotalSAR = subtotalSAR + vatTotalSAR;
 
-    // 3. Serial Number & UUID
+    // 3. Serial Number & UUID (Rule BR-KSA-03: RFC 4122 v4 UUID)
     const currentIcv = egs.icv + 1;
     const invoiceNumber = `INV-${new Date().getFullYear()}-${String(currentIcv).padStart(5, '0')}`;
-    const uuid = `sa-vat-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const uuid = crypto.randomUUID();
 
     const currentPih = egs.pih;
     const issueTimestamp = `${requestData.issueDate || new Date().toISOString().split('T')[0]}T${requestData.issueTime || new Date().toISOString().split('T')[1].slice(0, 8)}Z`;
 
-    // 4. Provisional XML & Hash
+    // 4. Pre-Signature Canonical XML Payload & Digest Calculation (Rule BR-KSA-26)
     const tempXmlForHash = buildZATCAUBLXml({
       invoiceNumber,
       uuid,
       icv: currentIcv,
       pih: currentPih,
-      invoiceHashBase64: 'TEMP_HASH',
-      qrCodeBase64TLV: 'TEMP_QR',
-      digitalSignatureBase64: 'TEMP_SIG',
+      digitalSignatureBase64: '',
+      qrCodeBase64TLV: '',
       request: requestData,
       taxpayer: egs.taxpayer,
       subtotalSAR,
       vatTotalSAR,
       grandTotalSAR,
+      includeSignatureBlocks: false, // Exclude UBLExtensions, QR, and Signature elements per Rule BR-KSA-26
     });
 
     const invoiceHashBase64 = computeSHA256Base64(tempXmlForHash);
@@ -191,7 +191,6 @@ router.post('/invoice/generate', async (req: Request, res: Response) => {
       uuid,
       icv: currentIcv,
       pih: currentPih,
-      invoiceHashBase64,
       qrCodeBase64TLV: tlvResult.base64TLV,
       digitalSignatureBase64,
       request: requestData,
@@ -199,6 +198,7 @@ router.post('/invoice/generate', async (req: Request, res: Response) => {
       subtotalSAR,
       vatTotalSAR,
       grandTotalSAR,
+      includeSignatureBlocks: true,
     });
 
     // 9. Update state ICV and PIH chain
