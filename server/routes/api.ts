@@ -1,9 +1,17 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import QRCode from 'qrcode';
 import { buildZatcaXml } from '../services/zatcaXml';
 import { buildZatcaPhase2Qr } from '../crypto/qr';
 import { computeXmlHash } from '../crypto/signer';
+import { generateEgsCsr } from '../crypto/csr';
+import { ZatcaOnboardingService } from '../services/zatcaOnboarding';
+
+const onboardingService = new ZatcaOnboardingService('simulation');
+const STORAGE_DIR = path.join(process.cwd(), 'server/storage');
+const CREDENTIALS_FILE = path.join(STORAGE_DIR, 'zatca_credentials.json');
 import {
   getEGSState,
   onboardEGS,
@@ -351,6 +359,134 @@ router.get('/invoice/xml/:id', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/xml');
   res.setHeader('Content-Disposition', `attachment; filename="${inv.invoiceNumber}_ZATCA.xml"`);
   res.send(inv.ublXml);
+});
+
+// Route A: Generate Keys & CSR for the EGS Unit
+router.post('/zatca/onboard/generate-csr', (req: Request, res: Response) => {
+  try {
+    const {
+      vatNumber = '300049785700003',
+      companyName = 'Saudi Flame Grill',
+      branchName = 'Riyadh Branch 1',
+      city = 'Riyadh',
+    } = req.body;
+
+    const egsUuid = crypto.randomUUID();
+    const result = generateEgsCsr(
+      {
+        environment: 'simulation',
+        vatNumber,
+        companyName,
+        branchName,
+        city,
+        businessCategory: 'Food and Beverage',
+        egsUuid,
+      },
+      STORAGE_DIR
+    );
+
+    if (!fs.existsSync(STORAGE_DIR)) {
+      fs.mkdirSync(STORAGE_DIR, { recursive: true });
+    }
+
+    fs.writeFileSync(
+      path.join(STORAGE_DIR, 'egs_info.json'),
+      JSON.stringify(
+        {
+          egsUuid,
+          vatNumber,
+          companyName,
+          branchName,
+          city,
+        },
+        null,
+        2
+      )
+    );
+
+    return res.json({
+      status: 'CSR_GENERATED',
+      egsUuid,
+      csrBase64: result.cleanCsrBase64,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Route B: Exchange OTP for Compliance CSID
+router.post('/zatca/onboard/exchange-otp', async (req: Request, res: Response) => {
+  try {
+    const { otp, csrBase64 } = req.body;
+    if (!otp || String(otp).trim().length !== 6) {
+      return res.status(400).json({ error: 'A valid 6-digit OTP is required' });
+    }
+
+    const ccsid = await onboardingService.requestComplianceCsid(csrBase64, otp);
+
+    if (!fs.existsSync(STORAGE_DIR)) {
+      fs.mkdirSync(STORAGE_DIR, { recursive: true });
+    }
+
+    fs.writeFileSync(
+      CREDENTIALS_FILE,
+      JSON.stringify(
+        {
+          status: 'COMPLIANCE_ISSUED',
+          complianceRequestId: ccsid.requestID,
+          binarySecurityToken: ccsid.binarySecurityToken,
+          secret: ccsid.secret,
+        },
+        null,
+        2
+      )
+    );
+
+    return res.json({
+      status: 'CCSID_ACTIVE',
+      requestId: ccsid.requestID,
+      message: 'Compliance CSID successfully issued. Proceed to sample compliance tests.',
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Route C: Upgrade Compliance CSID to Production CSID
+router.post('/zatca/onboard/upgrade-production', async (req: Request, res: Response) => {
+  try {
+    if (!fs.existsSync(CREDENTIALS_FILE)) {
+      return res.status(400).json({ error: 'No active Compliance CSID found. Run OTP onboarding first.' });
+    }
+
+    const currentCreds = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
+    const pcsid = await onboardingService.requestProductionCsid(
+      currentCreds.complianceRequestId,
+      currentCreds.binarySecurityToken,
+      currentCreds.secret
+    );
+
+    fs.writeFileSync(
+      CREDENTIALS_FILE,
+      JSON.stringify(
+        {
+          status: 'PRODUCTION_ACTIVE',
+          productionRequestId: pcsid.requestID,
+          binarySecurityToken: pcsid.binarySecurityToken,
+          secret: pcsid.secret,
+        },
+        null,
+        2
+      )
+    );
+
+    return res.json({
+      status: 'PRODUCTION_READY',
+      message: 'Production CSID issued successfully. Unit is authorized for live clearance & reporting.',
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;
