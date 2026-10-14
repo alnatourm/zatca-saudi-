@@ -48,8 +48,8 @@ export const translations = {
     // POS Simulator Tab
     posTitle: 'POS Invoice Simulator',
     posDesc: 'Construct B2C or B2B transactions, calculate 15% VAT, compute UBL 2.1 XML structure, generate ZATCA Phase 2 scannable QR codes, and sign with ECDSA CSID certificates.',
-    coffeePreset: 'Coffee Shop B2C POS',
-    itPreset: 'IT Consulting B2B',
+    coffeePreset: '(B2C Invoice)',
+    itPreset: '(B2B Invoice)',
     selectClassification: 'Select ZATCA Invoice Classification',
     simplifiedInvoice: 'Simplified Tax Invoice',
     simplifiedDesc: 'فاتورة ضريبية مبسطة - Consumer checkout. Reported to ZATCA within 24h. Includes full TLV QR code.',
@@ -168,8 +168,8 @@ export const translations = {
     // POS Simulator Tab
     posTitle: 'محاكي فواتير نقاط البيع (POS)',
     posDesc: 'إنشاء معاملات الأفراد والشركات (B2C & B2B)، حساب ضريبة القيمة المضافة 15%، بناء هيكل UBL 2.1 XML، توليد رمز الاستجابة السريعة القابل للمسح، والتوقيع الرقمي باستخدام شهادات CSID.',
-    coffeePreset: 'مقهى (فاتورة أفراد B2C)',
-    itPreset: 'استشارات تقنية (فاتورة شركات B2B)',
+    coffeePreset: '(فاتورة أفراد B2C)',
+    itPreset: '(فاتورة شركات B2B)',
     selectClassification: 'اختر تصنيف الفاتورة حسب الهيئة',
     simplifiedInvoice: 'فاتورة ضريبية مبسطة',
     simplifiedDesc: 'فاتورة ضريبية مبسطة - لمبيعات الأفراد (B2C). يتم الإبلاغ عنها للهيئة خلال 24 ساعة وتحتوي على رمز QR ملزم.',

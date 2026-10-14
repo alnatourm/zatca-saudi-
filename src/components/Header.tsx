@@ -1,12 +1,12 @@
 import React from 'react';
 import { EGSState, CompanyTenant } from '../types';
 import { Language, translations } from '../i18n';
-import { ShieldCheck, ShieldAlert, FileCode2, QrCode, Cpu, Hash, Building2, Languages, PlusCircle, Store } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, FileCode2, QrCode, Cpu, Hash, Building2, Languages, PlusCircle, Store, Shield, LogOut } from 'lucide-react';
 
 interface HeaderProps {
   egsState: EGSState | null;
-  activeTab: 'onboarding' | 'pos' | 'inspector';
-  setActiveTab: (tab: 'onboarding' | 'pos' | 'inspector') => void;
+  activeTab: 'onboarding' | 'pos' | 'inspector' | 'admin';
+  setActiveTab: (tab: 'onboarding' | 'pos' | 'inspector' | 'admin') => void;
   onOpenQRDecoder: () => void;
   lang: Language;
   setLang: (lang: Language) => void;
@@ -14,6 +14,8 @@ interface HeaderProps {
   activeTenantId?: string;
   onSelectTenant?: (tenantId: string) => void;
   onOpenAddTenantModal?: () => void;
+  currentUser?: any;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -27,15 +29,18 @@ export const Header: React.FC<HeaderProps> = ({
   activeTenantId = '',
   onSelectTenant = () => {},
   onOpenAddTenantModal = () => {},
+  currentUser,
+  onLogout = () => {},
 }) => {
   const t = translations[lang];
   const isOnboarded = egsState?.isOnboarded ?? false;
+  const isAdmin = currentUser?.role === 'admin';
 
   return (
-    <header className="bg-slate-900 text-white border-b border-slate-800 shadow-md">
+    <header className="bg-slate-900 text-white border-b border-slate-800 shadow-md" dir="ltr">
       {/* Top Banner */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           
           {/* Brand & Title */}
           <div className="flex items-center space-x-3 rtl:space-x-reverse">
@@ -59,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Tenant Switcher & Tools Bar */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-nowrap overflow-x-auto py-1 max-w-full">
 
             {/* SaaS Tenant Selector Dropdown */}
             {tenants.length > 0 && (
@@ -131,14 +136,6 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
 
-            {/* Taxpayer VAT snippet */}
-            {egsState?.taxpayer?.vatNumber && (
-              <div className="hidden lg:flex items-center gap-2 bg-slate-800/90 px-3 py-1.5 rounded-md text-xs border border-slate-700 text-slate-300">
-                <Building2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="font-mono">{egsState.taxpayer.vatNumber}</span>
-              </div>
-            )}
-
             {/* Decode QR tool button */}
             <button
               onClick={onOpenQRDecoder}
@@ -147,6 +144,23 @@ export const Header: React.FC<HeaderProps> = ({
               <QrCode className="w-3.5 h-3.5 text-emerald-400" />
               <span>{t.decodeQR}</span>
             </button>
+
+            {/* User Profile & Logout */}
+            {currentUser && (
+              <div className="flex items-center gap-2 bg-slate-800/90 px-3 py-1 rounded-md border border-slate-700 text-xs">
+                <div className="text-left rtl:text-right">
+                  <div className="font-bold text-white truncate max-w-[120px]">{currentUser.name || currentUser.email}</div>
+                  <div className="text-[10px] text-emerald-400 font-mono capitalize">{currentUser.role}</div>
+                </div>
+                <button
+                  onClick={onLogout}
+                  className="p-1.5 bg-slate-700 hover:bg-red-900/80 text-slate-300 hover:text-red-200 rounded transition"
+                  title="تسجيل الخروج"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
 
         </div>
@@ -203,6 +217,21 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               )}
             </button>
+
+            {/* Tab 4: Admin Dashboard (Visible if Admin) */}
+            {isAdmin && (
+              <button
+                onClick={() => setActiveTab('admin')}
+                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition whitespace-nowrap ${
+                  activeTab === 'admin'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-emerald-400 hover:text-emerald-300 hover:bg-slate-900 border border-emerald-800/50'
+                }`}
+              >
+                <Shield className="w-4 h-4 text-emerald-400" />
+                <span>{lang === 'ar' ? 'لوحة تحكم المسؤول (Admin)' : 'Admin Control Panel'}</span>
+              </button>
+            )}
 
           </nav>
         </div>

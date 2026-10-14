@@ -1,0 +1,14 @@
+[
+  {
+    "id": "usr-admin",
+    "email": "admin@zatca.gov.sa",
+    "passwordHash": "admin123",
+    "fullName": "System Administrator (مدير النظام)",
+    "companyName": "ZATCA Admin Central",
+    "role": "admin",
+    "status": "approved",
+    "packageId": "pkg-enterprise",
+    "allowedCompaniesCount": 10,
+    "createdAt": "2026-10-13T00:00:00.000Z"
+  }
+]

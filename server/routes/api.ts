@@ -9,11 +9,22 @@ import { computeXmlHash } from '../crypto/signer';
 import { generateEgsCsr } from '../crypto/csr';
 import { ZatcaOnboardingService } from '../services/zatcaOnboarding';
 import { ZatcaComplianceRunner } from '../services/complianceRunner';
+import {
+  getAllUsers,
+  findUserByEmail,
+  findUserById,
+  createUser,
+  saveUsers,
+  getAllPackages,
+  savePackages,
+  getCurrentSessionUserId,
+  setCurrentSessionUserId,
+} from '../services/userService';
 
-const onboardingService = new ZatcaOnboardingService('simulation');
+const onboardingService = new ZatcaOnboardingService('production');
 const STORAGE_DIR = path.join(process.cwd(), 'server/storage');
 const CREDENTIALS_FILE = path.join(STORAGE_DIR, 'zatca_credentials.json');
-const complianceRunner = new ZatcaComplianceRunner(STORAGE_DIR, 'simulation');
+const complianceRunner = new ZatcaComplianceRunner(STORAGE_DIR, 'production');
 import {
   getEGSState,
   onboardEGS,
@@ -41,6 +52,7 @@ import { validateZATCABusinessRules } from '../zatca/validation';
 import { InvoiceRequest, GeneratedInvoiceResponse } from '../zatca/types';
 
 const router = Router();
+
 
 // GET EGS state and device status
 router.get('/egs/status', (_req: Request, res: Response) => {
@@ -99,7 +111,7 @@ router.post('/tenants/create', (req: Request, res: Response) => {
       buildingNumber: buildingNumber || '1234',
       postalCode: postalCode || '12211',
       egsUuid: crypto.randomUUID(),
-      environment: 'simulation',
+      environment: 'production',
       csidStatus: 'NOT_ONBOARDED',
       icv: 0,
       pih: 'NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==',
@@ -643,7 +655,22 @@ router.post('/zatca/onboard/exchange-otp', async (req: Request, res: Response) =
       return res.status(400).json({ error: 'CSR not generated yet. Please click Step 1 first.' });
     }
 
-    const ccsid = await activeOnboardingService.requestComplianceCsid(cleanCsr, otp);
+    let ccsid;
+    try {
+      ccsid = await activeOnboardingService.requestComplianceCsid(cleanCsr, otp);
+    } catch (zatcaErr: any) {
+      if (env === 'simulation') {
+        ccsid = {
+          requestID: `sim-req-${Date.now()}`,
+          tokenType: 'Compliance',
+          binarySecurityToken: 'MIIJHzCCBgegAwIBAgIUWz...[SimulatedZatcaComplianceToken]...==',
+          secret: 'zatca-simulated-secret-key',
+          dispositionMessage: 'ISSUED_VIA_SIMULATION_FALLBACK',
+        };
+      } else {
+        throw zatcaErr;
+      }
+    }
 
     if (tenant) {
       tenant.complianceRequestId = ccsid.requestID;
@@ -709,11 +736,25 @@ router.post('/zatca/onboard/upgrade-production', async (req: Request, res: Respo
       return res.status(400).json({ error: 'No active Compliance CSID found. Run OTP onboarding first.' });
     }
 
-    const pcsid = await activeOnboardingService.requestProductionCsid(
-      ccsidRequestId,
-      ccsidToken,
-      ccsidSecret || 'zatca-simulated-secret'
-    );
+    let pcsid;
+    try {
+      pcsid = await activeOnboardingService.requestProductionCsid(
+        ccsidRequestId,
+        ccsidToken,
+        ccsidSecret || 'zatca-simulated-secret'
+      );
+    } catch (zatcaErr: any) {
+      if (env === 'simulation') {
+        pcsid = {
+          requestID: `sim-prod-${Date.now()}`,
+          binarySecurityToken: 'MIIJRTCCBy2gAwIBAgIUX...[SimulatedZatcaProductionToken]...==',
+          secret: 'zatca-simulated-production-secret',
+          dispositionMessage: 'PRODUCTION_ISSUED_VIA_SIMULATION_FALLBACK',
+        };
+      } else {
+        throw zatcaErr;
+      }
+    }
 
     if (tenant) {
       tenant.productionRequestId = pcsid.requestID;
@@ -773,4 +814,167 @@ router.get('/zatca/queue', (_req: Request, res: Response) => {
   });
 });
 
+// --- Authentication & User Management Routes ---
+router.post('/auth/signup', (req: Request, res: Response) => {
+  try {
+    const { email, password, fullName, companyName } = req.body;
+    if (!email || !password || !fullName || !companyName) {
+      return res.status(400).json({ success: false, error: 'جميع الحقول مطلوبة (البريد، كلمة المرور، الاسم، الشركة)' });
+    }
+    const existing = findUserByEmail(email);
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'البريد الإلكتروني مستخدم مسبقاً' });
+    }
+    const newUser = createUser({ email, password, fullName, companyName });
+    setCurrentSessionUserId(newUser.id);
+    return res.json({ success: true, user: newUser, message: 'تم إنشاء الحساب بنجاح وهو قيد المراجعة من قبل الإدارة.' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/auth/signin', (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+    const user = findUserByEmail(email);
+    if (!user || user.passwordHash !== password) {
+      return res.status(400).json({ success: false, error: 'البريد الإلكتروني أو كلمة المرور غير صحيحة' });
+    }
+    if (user.status === 'blocked') {
+      return res.status(403).json({ success: false, error: 'تم حظر هذا الحساب من قبل الإدارة' });
+    }
+    setCurrentSessionUserId(user.id);
+    return res.json({ success: true, user });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/auth/session', (_req: Request, res: Response) => {
+  try {
+    const userId = getCurrentSessionUserId();
+    const user = findUserById(userId) || getAllUsers()[0];
+    const packages = getAllPackages();
+    const userPackage = packages.find(p => p.id === user.packageId) || packages[0];
+    return res.json({ success: true, user, package: userPackage });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/auth/logout', (_req: Request, res: Response) => {
+  setCurrentSessionUserId('');
+  return res.json({ success: true });
+});
+
+// --- Admin Control Panel Routes ---
+router.get('/admin/users', (_req: Request, res: Response) => {
+  try {
+    const users = getAllUsers();
+    const packages = getAllPackages();
+    return res.json({ success: true, users, packages });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/admin/users/:id/status', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const normalizedStatus = status === 'active' ? 'approved' : status;
+    if (!['approved', 'blocked', 'pending'].includes(normalizedStatus)) {
+      return res.status(400).json({ success: false, error: 'حالة غير صالحة' });
+    }
+    const users = getAllUsers();
+    const user = users.find(u => u.id === id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'المستخدم غير موجود' });
+    }
+    user.status = normalizedStatus;
+    saveUsers(users);
+    return res.json({ success: true, user });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/admin/users/:id/password', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 3) {
+      return res.status(400).json({ success: false, error: 'كلمة المرور الجديدة يجب أن تكون 3 أحرف على الأقل' });
+    }
+    const users = getAllUsers();
+    const user = users.find(u => u.id === id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'المستخدم غير موجود' });
+    }
+    user.passwordHash = newPassword;
+    saveUsers(users);
+    return res.json({ success: true, user, message: 'تم تحديث كلمة المرور بنجاح' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/admin/users/:id/package', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { packageId } = req.body;
+    const packages = getAllPackages();
+    const pkg = packages.find(p => p.id === packageId);
+    if (!pkg) {
+      return res.status(400).json({ success: false, error: 'الباقة غير موجودة' });
+    }
+    const users = getAllUsers();
+    const user = users.find(u => u.id === id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'المستخدم غير موجود' });
+    }
+    user.packageId = pkg.id;
+    user.allowedCompaniesCount = pkg.maxCompanies;
+    saveUsers(users);
+    return res.json({ success: true, user, package: pkg });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/admin/packages', (_req: Request, res: Response) => {
+  try {
+    return res.json({ success: true, packages: getAllPackages() });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/admin/packages', (req: Request, res: Response) => {
+  try {
+    const { id, name, nameAr, priceSAR, maxUsers, maxCompanies, description } = req.body;
+    const packages = getAllPackages();
+    const existingIndex = packages.findIndex(p => p.id === id);
+    const updatedPkg = {
+      id: id || `pkg-${Date.now()}`,
+      name: name || 'Custom Package',
+      nameAr: nameAr || 'باقة مخصصة',
+      priceSAR: Number(priceSAR) || 199,
+      maxUsers: Number(maxUsers) || 1,
+      maxCompanies: Number(maxCompanies) || 1,
+      description: description || '',
+    };
+    if (existingIndex >= 0) {
+      packages[existingIndex] = updatedPkg;
+    } else {
+      packages.push(updatedPkg);
+    }
+    savePackages(packages);
+    return res.json({ success: true, packages });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
+

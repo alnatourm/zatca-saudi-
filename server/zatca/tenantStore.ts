@@ -35,28 +35,7 @@ const TENANTS_FILE = path.join(STORAGE_DIR, 'tenants.json');
 function ensureStorage() {
   if (!fs.existsSync(STORAGE_DIR)) fs.mkdirSync(STORAGE_DIR, { recursive: true });
   if (!fs.existsSync(TENANTS_FILE)) {
-    // Single clean test tenant for strict failure verification
-    const initialTenants: Record<string, CompanyTenant> = {
-      'single-test-company': {
-        id: 'single-test-company',
-        name: 'Saudi Flame Grill',
-        type: 'restaurant',
-        vatNumber: '300049785700003',
-        crNumber: '1010884422',
-        branchName: 'Riyadh Main Branch',
-        city: 'Riyadh',
-        district: 'Olaya',
-        streetName: 'King Fahd Road',
-        buildingNumber: '2145',
-        postalCode: '12211',
-        egsUuid: '8b9d5c41-8654-4770-9831-2911b333a101',
-        environment: 'simulation',
-        csidStatus: 'NOT_ONBOARDED',
-        icv: 0,
-        pih: 'NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==',
-        createdAt: '2026-09-23T09:00:00.000Z',
-      },
-    };
+    const initialTenants: Record<string, CompanyTenant> = {};
     fs.writeFileSync(TENANTS_FILE, JSON.stringify(initialTenants, null, 2));
     try { fs.chmodSync(TENANTS_FILE, 0o600); } catch (_) {}
   }

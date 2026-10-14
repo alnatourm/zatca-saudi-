@@ -35,18 +35,9 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
   const [lineItems, setLineItems] = useState<LineItem[]>([
     {
       id: '1',
-      itemName: 'وجبة شاورما دجاج جامبو / Chicken Shawarma Combo',
-      quantity: 2,
-      unitPrice: 22.0,
-      vatCategory: 'S',
-      vatRate: 15,
-      discount: 0,
-    },
-    {
-      id: '2',
-      itemName: 'بطاطس مقلية عائلي / Family French Fries',
+      itemName: 'منتج / خدمة أفراد 1',
       quantity: 1,
-      unitPrice: 12.0,
+      unitPrice: 100.0,
       vatCategory: 'S',
       vatRate: 15,
       discount: 0,
@@ -54,10 +45,10 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
   ]);
 
   // Customer / Buyer details for B2B
-  const [buyerName, setBuyerName] = useState<string>('شركة الشرق للحلول التقنية');
-  const [buyerVatNumber, setBuyerVatNumber] = useState<string>('311122233300003');
-  const [buyerCity, setBuyerCity] = useState<string>('جدة');
-  const [buyerPostalCode, setBuyerPostalCode] = useState<string>('21589');
+  const [buyerName, setBuyerName] = useState<string>('');
+  const [buyerVatNumber, setBuyerVatNumber] = useState<string>('');
+  const [buyerCity, setBuyerCity] = useState<string>('');
+  const [buyerPostalCode, setBuyerPostalCode] = useState<string>('');
 
   const [generatedInvoice, setGeneratedInvoice] = useState<GeneratedInvoiceResponse | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -134,22 +125,31 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
     reader.readAsText(file);
   };
 
+  const handleDownloadSampleTemplate = () => {
+    const csvContent = "ItemName,Quantity,UnitPrice,VatCategory,VatRate,Discount\n" +
+      "منتج تجريبي 1,2,50.00,S,15,0\n" +
+      "خدمة استشارية,1,500.00,S,15,0";
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'zatca_pos_import_template.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleLoadCoffeePreset = () => {
     setInvoiceType('0200000');
     setLineItems([
-      { id: '1', itemName: 'وجبة شاورما دجاج جامبو', quantity: 2, unitPrice: 22.0, vatCategory: 'S', vatRate: 15, discount: 0 },
-      { id: '2', itemName: 'بطاطس مقلية عائلي', quantity: 1, unitPrice: 12.0, vatCategory: 'S', vatRate: 15, discount: 0 },
-      { id: '3', itemName: 'مشروب غازي بيبسي', quantity: 2, unitPrice: 5.0, vatCategory: 'S', vatRate: 15, discount: 0 },
+      { id: '1', itemName: 'منتج أو خدمة أفراد', quantity: 1, unitPrice: 100.0, vatCategory: 'S', vatRate: 15, discount: 0 },
     ]);
   };
 
   const handleLoadITPreset = () => {
     setInvoiceType('0100000');
-    setBuyerName('شركة التقنية العربية المتقدمة');
-    setBuyerVatNumber('311122233300003');
     setLineItems([
-      { id: '1', itemName: 'استشارات بنية تحتية سحابية', quantity: 10, unitPrice: 450.0, vatCategory: 'S', vatRate: 15, discount: 0 },
-      { id: '2', itemName: 'ترخيص شهادات الأمان الرقمية', quantity: 1, unitPrice: 1200.0, vatCategory: 'S', vatRate: 15, discount: 0 },
+      { id: '1', itemName: 'منتج أو خدمة شركات', quantity: 1, unitPrice: 1000.0, vatCategory: 'S', vatRate: 15, discount: 0 },
     ]);
   };
 
@@ -185,11 +185,11 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
           ? {
               buyerName: buyerName.trim(),
               buyerVatNumber: buyerVatNumber.trim(),
-              buyerStreet: 'طريق الملك عبد العزيز',
-              buyerBuildingNumber: '1102',
-              buyerDistrict: 'الشاطئ',
-              buyerCity: buyerCity.trim() || 'جدة',
-              buyerPostalCode: buyerPostalCode.trim() || '21589',
+              buyerStreet: '',
+              buyerBuildingNumber: '',
+              buyerDistrict: '',
+              buyerCity: buyerCity.trim(),
+              buyerPostalCode: buyerPostalCode.trim(),
               buyerCountry: 'SA',
             }
           : undefined,
@@ -256,17 +256,29 @@ export const POSSimulatorTab: React.FC<POSSimulatorTabProps> = ({
           </div>
         </div>
 
-        {/* POS File Import Dropzone / Button */}
-        <label className="cursor-pointer flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-4 py-2.5 rounded-lg font-semibold transition shadow-md hover:shadow-indigo-900/40">
-          <FileSpreadsheet className="w-4 h-4" />
-          <span>{lang === 'ar' ? 'استيراد ملف POS / Excel (CSV)' : 'Import POS / Excel CSV'}</span>
-          <input
-            type="file"
-            accept=".csv,.txt,.json"
-            className="hidden"
-            onChange={handleFileUpload}
-          />
-        </label>
+        {/* Import & Template Buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={handleDownloadSampleTemplate}
+            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 text-xs px-3 py-2.5 rounded-lg font-medium transition"
+            title={lang === 'ar' ? 'تحميل نموذج ملف CSV للاستيراد' : 'Download Sample CSV Template'}
+          >
+            <FileCode2 className="w-4 h-4 text-emerald-400" />
+            <span>{lang === 'ar' ? 'تحميل نموذج إكسل/CSV' : 'Download Template'}</span>
+          </button>
+
+          <label className="cursor-pointer flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-4 py-2.5 rounded-lg font-semibold transition shadow-md hover:shadow-indigo-900/40">
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>{lang === 'ar' ? 'استيراد ملف POS / Excel (CSV)' : 'Import POS / Excel CSV'}</span>
+            <input
+              type="file"
+              accept=".csv,.txt,.json"
+              className="hidden"
+              onChange={handleFileUpload}
+            />
+          </label>
+        </div>
       </div>
 
       {importNotice && (

@@ -5,17 +5,23 @@ import { Header } from './components/Header';
 import { EGSOnboardingTab } from './components/EGSOnboardingTab';
 import { POSSimulatorTab } from './components/POSSimulatorTab';
 import { StateInspectorTab } from './components/StateInspectorTab';
+import { AdminDashboardTab } from './components/AdminDashboardTab';
+import { AuthModal } from './components/AuthModal';
 import { QRDecoderModal } from './components/QRDecoderModal';
 import { AddTenantModal } from './components/AddTenantModal';
-import { ShieldCheck, AlertCircle } from 'lucide-react';
+import { ShieldCheck, AlertCircle, Clock, XCircle, LogOut } from 'lucide-react';
 
 export default function App() {
   const [lang, setLang] = useState<Language>('ar'); // Default to Arabic / العربية
-  const [activeTab, setActiveTab] = useState<'onboarding' | 'pos' | 'inspector'>('pos');
+  const [activeTab, setActiveTab] = useState<'onboarding' | 'pos' | 'inspector' | 'admin'>('pos');
   const [egsState, setEgsState] = useState<EGSState | null>(null);
   const [invoiceList, setInvoiceList] = useState<GeneratedInvoiceResponse[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Auth User State
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
 
   // Multi-Tenant SaaS State
   const [tenants, setTenants] = useState<CompanyTenant[]>([]);
@@ -25,6 +31,37 @@ export default function App() {
   // QR Decoder Modal State
   const [isQRModalOpen, setIsQRModalOpen] = useState<boolean>(false);
   const [qrBase64ToDecode, setQrBase64ToDecode] = useState<string>('');
+
+  // Check current session
+  const checkSession = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/session');
+      const data = await res.json();
+      if (data.success && data.user) {
+        setCurrentUser(data.user);
+        if (data.user.role === 'admin' && activeTab === 'admin') {
+          // Keep admin tab
+        }
+      } else {
+        setCurrentUser(null);
+      }
+    } catch (err) {
+      console.error('Failed to check session:', err);
+    } finally {
+      setIsAuthChecking(false);
+    }
+  }, [activeTab]);
+
+  // Logout handler
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      setCurrentUser(null);
+      setActiveTab('pos');
+    } catch (err) {
+      console.error('Logout failed:', err);
+    }
+  };
 
   // Fetch tenants list
   const fetchTenants = useCallback(async () => {
@@ -72,10 +109,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    checkSession();
     fetchTenants();
     fetchEGSStatus();
     fetchInvoices();
-  }, [fetchTenants, fetchEGSStatus, fetchInvoices]);
+  }, [checkSession, fetchTenants, fetchEGSStatus, fetchInvoices]);
 
   // Switch Active Tenant
   const handleSelectTenant = async (tenantId: string) => {
@@ -227,6 +265,107 @@ export default function App() {
     setIsQRModalOpen(true);
   };
 
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">
+        {lang === 'ar' ? 'جاري التحميل...' : 'Loading...'}
+      </div>
+    );
+  }
+
+  // If user is not logged in, show AuthModal
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center p-4">
+        <AuthModal
+          onSuccess={(user) => {
+            setCurrentUser(user);
+            checkSession();
+          }}
+          lang={lang}
+        />
+      </div>
+    );
+  }
+
+  // If user is pending approval
+  if (currentUser.status === 'pending') {
+    return (
+      <div
+        dir={lang === 'ar' ? 'rtl' : 'ltr'}
+        className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4"
+      >
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-8 text-center shadow-2xl space-y-6">
+          <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center justify-center mx-auto text-amber-400">
+            <Clock className="w-8 h-8 animate-pulse" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-bold text-slate-100">
+              {lang === 'ar' ? 'حسابك قيد المراجعة (Pending Approval)' : 'Account Pending Admin Approval'}
+            </h1>
+            <p className="text-sm text-slate-400">
+              {lang === 'ar'
+                ? 'شكراً لتسجيلك في منصة فاتورة. تم إرسال طلبك بنجاح وهو الآن قيد المراجعة والاعتماد من قبل مسؤول النظام. سيتم تفعيل حسابك قريباً.'
+                : 'Thank you for registering. Your account has been created and is currently awaiting review and activation by the system administrator.'}
+            </p>
+          </div>
+          <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 text-xs font-mono text-slate-300 space-y-1">
+            <div>{lang === 'ar' ? 'البريد الإلكتروني:' : 'Email:'} {currentUser.email}</div>
+            <div>{lang === 'ar' ? 'الشركة:' : 'Company:'} {currentUser.companyName || 'N/A'}</div>
+          </div>
+          <div className="flex gap-3 justify-center pt-2">
+            <button
+              onClick={checkSession}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition"
+            >
+              {lang === 'ar' ? 'التحقق من حالة الحساب' : 'Check Approval Status'}
+            </button>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition flex items-center gap-1.5"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>{lang === 'ar' ? 'تسجيل الخروج' : 'Sign Out'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If user is blocked
+  if (currentUser.status === 'blocked') {
+    return (
+      <div
+        dir={lang === 'ar' ? 'rtl' : 'ltr'}
+        className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4"
+      >
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-8 text-center shadow-2xl space-y-6">
+          <div className="w-16 h-16 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center justify-center mx-auto text-red-400">
+            <XCircle className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-bold text-red-400">
+              {lang === 'ar' ? 'تم حظر الحساب (Account Blocked)' : 'Account Has Been Blocked'}
+            </h1>
+            <p className="text-sm text-slate-400">
+              {lang === 'ar'
+                ? 'عذراً، تم حظر حسابك أو إيقافه مؤقتاً من قبل مسؤول النظام. يرجى التواصل مع الدعم الفني للاستفسار.'
+                : 'Sorry, your account has been blocked or suspended by the system administrator. Please contact support.'}
+            </p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition flex items-center gap-1.5 mx-auto"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>{lang === 'ar' ? 'تسجيل الخروج' : 'Sign Out'}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
@@ -244,6 +383,8 @@ export default function App() {
         activeTenantId={activeTenantId}
         onSelectTenant={handleSelectTenant}
         onOpenAddTenantModal={() => setIsAddTenantModalOpen(true)}
+        currentUser={currentUser}
+        onLogout={handleLogout}
       />
 
       {/* Global Error Banner */}
@@ -295,6 +436,13 @@ export default function App() {
             onOpenQRDecoder={handleOpenQRModal}
             isLoading={isLoading}
             lang={lang}
+          />
+        )}
+
+        {activeTab === 'admin' && currentUser?.role === 'admin' && (
+          <AdminDashboardTab
+            lang={lang}
+            onUserStatusUpdated={checkSession}
           />
         )}
       </main>

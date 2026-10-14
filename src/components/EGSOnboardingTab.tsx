@@ -21,33 +21,33 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
   const t = translations[lang];
 
   const [taxpayerName, setTaxpayerName] = useState(
-    activeTenant?.name || egsState?.taxpayer?.taxpayerName || 'Saudi Flame Grill'
+    activeTenant?.name || egsState?.taxpayer?.taxpayerName || ''
   );
   const [vatNumber, setVatNumber] = useState(
-    activeTenant?.vatNumber || egsState?.taxpayer?.vatNumber || '300049785700003'
+    activeTenant?.vatNumber || egsState?.taxpayer?.vatNumber || ''
   );
   const [branchName, setBranchName] = useState(
-    activeTenant?.branchName || egsState?.taxpayer?.branchName || 'Riyadh Main Branch'
+    activeTenant?.branchName || egsState?.taxpayer?.branchName || ''
   );
   const [city, setCity] = useState(
-    activeTenant?.city || egsState?.taxpayer?.city || 'Riyadh'
+    activeTenant?.city || egsState?.taxpayer?.city || ''
   );
-  const [otp, setOtp] = useState(egsState?.taxpayer?.otp || '123456');
+  const [otp, setOtp] = useState(egsState?.taxpayer?.otp || '');
 
   const [crNumber, setCrNumber] = useState(
-    activeTenant?.crNumber || egsState?.taxpayer?.crNumber || '1010884422'
+    activeTenant?.crNumber || egsState?.taxpayer?.crNumber || ''
   );
   const [streetName, setStreetName] = useState(
-    activeTenant?.streetName || egsState?.taxpayer?.streetName || 'King Fahd Road'
+    activeTenant?.streetName || egsState?.taxpayer?.streetName || ''
   );
   const [buildingNumber, setBuildingNumber] = useState(
-    activeTenant?.buildingNumber || egsState?.taxpayer?.buildingNumber || '2145'
+    activeTenant?.buildingNumber || egsState?.taxpayer?.buildingNumber || ''
   );
   const [postalCode, setPostalCode] = useState(
-    activeTenant?.postalCode || egsState?.taxpayer?.postalCode || '12211'
+    activeTenant?.postalCode || egsState?.taxpayer?.postalCode || ''
   );
   const [district, setDistrict] = useState(
-    activeTenant?.district || egsState?.taxpayer?.district || 'Olaya'
+    activeTenant?.district || egsState?.taxpayer?.district || ''
   );
 
   const [generatedCsrBase64, setGeneratedCsrBase64] = useState<string>(activeTenant?.cleanCsrBase64 || '');
@@ -245,16 +245,8 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
             <p className="text-slate-300 text-xs sm:text-sm max-w-2xl">{t.onboardingDesc}</p>
           </div>
 
-          <button
-            type="button"
-            onClick={handleFillSample}
-            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 px-3 py-2 rounded-lg text-xs font-medium transition"
-          >
-            <Sparkles className="w-4 h-4 text-emerald-400" />
-            <span>{t.fillSampleData}</span>
-          </button>
+          </div>
         </div>
-      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
@@ -378,7 +370,7 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
             </div>
 
             {/* OTP Input Box */}
-            <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-4 space-y-2">
+            <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
                   <KeyRound className="w-4 h-4 text-amber-700" />
@@ -386,6 +378,32 @@ export const EGSOnboardingTab: React.FC<EGSOnboardingTabProps> = ({
                 </label>
                 <span className="text-[11px] text-amber-700 font-medium">{t.otpFromPortal}</span>
               </div>
+
+              {/* OTP Explanation Guide */}
+              <div className="bg-white/90 border border-amber-200 rounded-lg p-3 text-xs text-slate-700 space-y-1.5 leading-relaxed">
+                <p className="font-bold text-amber-900 flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-600"></span>
+                  {lang === 'ar' ? 'من أين تحصل على رمز التحقق (OTP)؟' : 'Where do you get the ZATCA OTP?'}
+                </p>
+                <ol className="list-decimal list-inside space-y-1 text-slate-600 rtl:pr-1">
+                  <li>
+                    {lang === 'ar'
+                      ? 'سجل الدخول إلى بوابة فواتير الرسمية لهيئة الزكاة والضريبة والجمارك (ZATCA Fatoora Portal).'
+                      : 'Log in to the official ZATCA Fatoora Portal.'}
+                  </li>
+                  <li>
+                    {lang === 'ar'
+                      ? 'انتقل إلى إدارة الوحدات (Management -> EGS Units) وأضف وحدة جديدة.'
+                      : 'Navigate to Management -> EGS Units and add a new unit.'}
+                  </li>
+                  <li>
+                    {lang === 'ar'
+                      ? 'أنشئ رمز OTP جديد للفرع، ثم انسخ الرمز المكون من 6 أرقام والصقه أدناه.'
+                      : 'Generate a new OTP for the branch, then copy the 6-digit code and paste it below.'}
+                  </li>
+                </ol>
+              </div>
+
               <input
                 type="text"
                 maxLength={6}
